@@ -66,13 +66,18 @@ func helperURL() throws -> URL {
         }
     }
 
-    func join(address: String, name: String, password: String, runtimeArguments: [String]) {
+    func join(address: String, name: String, password: String, launcherPath: String) {
         guard !gameRunning else { return }
         do {
             let helper = try helperURL()
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-            process.arguments = [helper.path] + runtimeArguments + ["--launch", address, name] + (password.isEmpty ? [] : [password])
+            process.arguments = [helper.path, "--launcher", launcherPath, "--launch", address, name]
+                + (password.isEmpty ? [] : [password])
+            var environment = ProcessInfo.processInfo.environment
+            environment.merge(try environmentForRunningSteam(launcherPath: launcherPath)) { _, steamValue in steamValue }
+            environment.removeValue(forKey: "WINELOADERNOEXEC")
+            process.environment = environment
             let pipe = Pipe()
             process.standardOutput = pipe
             process.standardError = pipe
@@ -136,8 +141,6 @@ struct ContentView: View {
     @StateObject private var model = LauncherModel()
     @AppStorage("KCDMPPlayerName") private var nickname = ""
     @AppStorage("KCDMPLauncherPath") private var launcherPath = "~/WineForge/Steam/drive_c/Program Files (x86)/Steam/steamapps/Common/KingdomComeDeliverance2/Bin/Win64MasterMasterSteamPGO/KcdMp_launcher.exe"
-    @AppStorage("KCDMPWineForgeAppPath") private var wineForgeAppPath = "/Applications/WineForge.app"
-    @AppStorage("KCDMPCrossOverAppPath") private var crossOverAppPath = "/Applications/CrossOver.app"
     @State private var serverPassword = ""
     @State private var directAddress = ""
     @State private var selectedID: String?
@@ -152,13 +155,6 @@ struct ContentView: View {
         return URL(fileURLWithPath: expandedLauncherPath).lastPathComponent == "KcdMp_launcher.exe"
             && FileManager.default.fileExists(atPath: expandedLauncherPath, isDirectory: &isDirectory)
             && !isDirectory.boolValue && bottlePrefix != nil
-    }
-    private var runtimeArguments: [String] {
-        let isCrossOver = bottlePrefix.map {
-            FileManager.default.fileExists(atPath: $0 + "/cxbottle.conf")
-        } ?? false
-        return ["--engine", "auto", "--app", isCrossOver ? crossOverAppPath : wineForgeAppPath,
-                "--launcher", launcherPath]
     }
     private var newestServerVersion: String {
         model.servers.map(\.version).max {
@@ -244,10 +240,7 @@ struct ContentView: View {
     private func migrateLauncherPath() {
         let defaults = UserDefaults.standard
         guard defaults.object(forKey: "KCDMPLauncherPath") == nil else { return }
-        if defaults.string(forKey: "KCDMPWineApp") == "crossover",
-           let old = defaults.string(forKey: "KCDMPCrossOverLauncher"), !old.isEmpty {
-            launcherPath = old
-        } else if let old = defaults.string(forKey: "KCDMPWineForgeLauncher"), !old.isEmpty {
+        if let old = defaults.string(forKey: "KCDMPWineForgeLauncher"), !old.isEmpty {
             launcherPath = old
         } else if let oldPrefix = defaults.string(forKey: "KCDMPWineForgePrefix"), !oldPrefix.isEmpty {
             launcherPath = oldPrefix + "/drive_c/Program Files (x86)/Steam/steamapps/Common/KingdomComeDeliverance2/Bin/Win64MasterMasterSteamPGO/KcdMp_launcher.exe"
@@ -275,8 +268,7 @@ struct ContentView: View {
             return
         }
         let token = needsServerPassword ? serverPassword : ""
-        model.join(address: address, name: name, password: token,
-                   runtimeArguments: runtimeArguments)
+        model.join(address: address, name: name, password: token, launcherPath: expandedLauncherPath)
         serverPassword = ""
     }
 }
@@ -287,8 +279,6 @@ struct ContentView: View {
         // Keep the nickname and selected MP path from earlier local builds.
         if let previous = UserDefaults(suiteName: "local.kcdmp.maclauncher") {
             for key in ["KCDMPPlayerName", "KCDMPLauncherPath",
-                        "KCDMPWineForgeAppPath", "KCDMPCrossOverAppPath",
-                        "KCDMPWineApp", "KCDMPCrossOverLauncher",
                         "KCDMPWineForgeLauncher", "KCDMPWineForgePrefix"] {
                 if UserDefaults.standard.object(forKey: key) == nil,
                    let value = previous.object(forKey: key) {

@@ -1,24 +1,13 @@
 #!/bin/zsh
 set -euo pipefail
 
-# Can be used directly or by the macOS app. The launcher path identifies the bottle.
-engine=auto
-runtime_app=
-bottle=
-prefix="$HOME/WineForge/Steam"
-metal_runtime="$HOME/Library/Application Support/Wine Forge/Runtimes/D3DMetal"
+# The selected MP file identifies the running Steam bottle.
 launcher=
 
 usage() {
   cat <<'HELP'
-Usage: kcdmp-launch.sh [runtime options] ACTION
-Runtime options:
-  --engine auto|wineforge|crossover (default: auto)
-  --app PATH             WineForge.app or CrossOver.app
-  --bottle NAME          CrossOver bottle name (WineForge derives it from prefix)
-  --prefix PATH          WineForge bottle directory
-  --metal-runtime PATH   WineForge D3DMetal runtime directory
-  --launcher PATH        KcdMp_launcher.exe inside the selected bottle
+Usage: kcdmp-launch.sh --launcher PATH ACTION
+  --launcher PATH        KcdMp_launcher.exe inside the Steam bottle
 Actions:
   --check-update
   --update-only
@@ -38,36 +27,20 @@ expand_home() {
 
 while (( $# )); do
   case "$1" in
-    --engine|--app|--bottle|--prefix|--metal-runtime|--launcher)
+    --launcher)
       if (( $# < 2 )); then
         print -u2 "Missing value for $1"
         exit 2
       fi
-      option="$1"
-      value="$2"
+      launcher="$2"
       shift 2
-      case "$option" in
-        --engine) engine="$value" ;;
-        --app) runtime_app="$value" ;;
-        --bottle) bottle="$value" ;;
-        --prefix) prefix="$value" ;;
-        --metal-runtime) metal_runtime="$value" ;;
-        --launcher) launcher="$value" ;;
-      esac
       ;;
     --help|-h) usage; exit 0 ;;
     *) break ;;
   esac
 done
 
-runtime_app="$(expand_home "$runtime_app")"
-prefix="$(expand_home "$prefix")"
-metal_runtime="$(expand_home "$metal_runtime")"
 launcher="$(expand_home "$launcher")"
-if [[ -z "$launcher" && "$engine" != crossover ]]; then
-  launcher="$prefix/drive_c/Program Files (x86)/Steam/steamapps/Common/KingdomComeDeliverance2/Bin/Win64MasterMasterSteamPGO/KcdMp_launcher.exe"
-fi
-
 if [[ -z "$launcher" ]]; then
   print -u2 'Choose the path to KcdMp_launcher.exe in the app.'
   exit 2
@@ -82,8 +55,7 @@ if [[ "${launcher:t}" != KcdMp_launcher.exe ]]; then
 fi
 game_bin="${launcher:h}"
 
-# Steam starts KCD2 with the game's selected locale. Starting the MP executable
-# directly misses that handoff, so derive it from the same bottle's appmanifest.
+# The MP launcher starts KCD2 itself, so use the game's language selected in Steam.
 manifest=
 if [[ "$launcher" == */steamapps/* ]]; then
   steamapps_dir="${launcher%%/steamapps/*}/steamapps"
@@ -96,25 +68,30 @@ fi
 if [[ -f "$manifest" ]]; then
   game_language=$(sed -nE 's/^[[:space:]]*"language"[[:space:]]*"([^"]+)".*/\1/p' "$manifest" | head -n 1)
   if [[ "$game_language" =~ '^[a-zA-Z_-]+$' ]]; then
-      export SteamAppLanguage="$game_language"
-      case "$game_language" in
-        czech) export LANG=cs_CZ.UTF-8 ;;
-        english) export LANG=en_US.UTF-8 ;;
-        german) export LANG=de_DE.UTF-8 ;;
-        french) export LANG=fr_FR.UTF-8 ;;
-        italian) export LANG=it_IT.UTF-8 ;;
-        spanish) export LANG=es_ES.UTF-8 ;;
-        polish) export LANG=pl_PL.UTF-8 ;;
-        russian) export LANG=ru_RU.UTF-8 ;;
-        japanese) export LANG=ja_JP.UTF-8 ;;
-        korean) export LANG=ko_KR.UTF-8 ;;
-        portuguese) export LANG=pt_PT.UTF-8 ;;
-        brazilian) export LANG=pt_BR.UTF-8 ;;
-        turkish) export LANG=tr_TR.UTF-8 ;;
-        ukrainian) export LANG=uk_UA.UTF-8 ;;
-        schinese) export LANG=zh_CN.UTF-8 ;;
-        tchinese) export LANG=zh_TW.UTF-8 ;;
-      esac
+    export SteamAppLanguage="$game_language"
+    locale_name=
+    case "$game_language" in
+      czech) locale_name=cs_CZ.UTF-8 ;;
+      english) locale_name=en_US.UTF-8 ;;
+      german) locale_name=de_DE.UTF-8 ;;
+      french) locale_name=fr_FR.UTF-8 ;;
+      italian) locale_name=it_IT.UTF-8 ;;
+      spanish) locale_name=es_ES.UTF-8 ;;
+      polish) locale_name=pl_PL.UTF-8 ;;
+      russian) locale_name=ru_RU.UTF-8 ;;
+      japanese) locale_name=ja_JP.UTF-8 ;;
+      korean) locale_name=ko_KR.UTF-8 ;;
+      portuguese) locale_name=pt_PT.UTF-8 ;;
+      brazilian) locale_name=pt_BR.UTF-8 ;;
+      turkish) locale_name=tr_TR.UTF-8 ;;
+      ukrainian) locale_name=uk_UA.UTF-8 ;;
+      schinese) locale_name=zh_CN.UTF-8 ;;
+      tchinese) locale_name=zh_TW.UTF-8 ;;
+    esac
+    if [[ -n "$locale_name" ]]; then
+      export LANG="$locale_name"
+      export LC_ALL="$locale_name"
+    fi
   fi
 fi
 
@@ -122,75 +99,26 @@ if [[ "$launcher" != /*/drive_c/* ]]; then
   print -u2 'Select KcdMp_launcher.exe inside a Wine bottle drive_c folder.'
   exit 2
 fi
-launcher_prefix="${launcher%%/drive_c/*}"
-if [[ "$engine" == auto ]]; then
-  prefix="$launcher_prefix"
-  if [[ -f "$prefix/cxbottle.conf" ]]; then
-    engine=crossover
+prefix="${launcher%%/drive_c/*}"
+if [[ -f "$prefix/cxbottle.conf" ]]; then
+  if [[ -n "${CX_ROOT:-}" && -x "$CX_ROOT/bin/wine" ]]; then
+    wine_exe="$CX_ROOT/bin/wine"
   else
-    engine=wineforge
-  fi
-elif [[ "$engine" == crossover ]]; then
-  prefix="$launcher_prefix"
-fi
-if [[ "$engine" == crossover && -z "$bottle" ]]; then
-  bottle="${prefix:t}"
-fi
-if [[ -z "$runtime_app" ]]; then
-  if [[ "$engine" == crossover ]]; then
-    runtime_app=/Applications/CrossOver.app
-  else
-    runtime_app=/Applications/WineForge.app
-  fi
-fi
-
-case "$engine" in
-  wineforge)
-    if [[ -z "$bottle" ]]; then
-      bottle="${prefix:t}"
+    crossover_app=/Applications/CrossOver.app
+    if [[ ! -d "$crossover_app" ]]; then
+      crossover_app="$HOME/Applications/CrossOver.app"
     fi
-    wine_root="$runtime_app/Contents/Resources/Engine/WineForgeCore"
-    wine_exe="$wine_root/bin/wine"
-    wine_server="$wine_root/bin/wineserver"
-    for required in "$prefix" "$wine_exe" "$wine_server" \
-      "$metal_runtime/wine/x86_64-windows/d3d12.dll" \
-      "$metal_runtime/external/D3DMetal.framework/D3DMetal"; do
-      if [[ ! -e "$required" ]]; then
-        print -u2 "WineForge component not found: $required"
-        exit 1
-      fi
-    done
-    export WINEPREFIX="$prefix"
-    export WINE="$wine_exe"
-    export WINESERVER="$wine_server"
-    export WINEDEBUG=-all
-    export WINEWFUSYNC=1
-    export WINEFORGE_BOTTLE_NAME="$bottle"
-    export GRAPHICS_BACKEND=d3dmetal
-    export ACTIVE_GRAPHICS_BACKEND=d3dmetal
-    export D3DMETAL_RUNTIME_DIR="$metal_runtime"
-    export D3DMETAL_FRAMEWORK_PATH="$metal_runtime/external/D3DMetal.framework/D3DMetal"
-    export D3DMETAL_LIBD3DSHARED_PATH="$metal_runtime/external/libd3dshared.dylib"
-    export WINEDLLOVERRIDES='dxgi=n,b;d3d10=n,b;d3d10core=n,b;d3d11=n,b;d3d12=n,b'
-    export WINEDLLPATH="$metal_runtime/wine:$wine_root/lib/wine/x86_64-windows:$wine_root/lib/wine/i386-windows:$wine_root/lib/wine:$wine_root/lib/dxmt"
-    export DYLD_LIBRARY_PATH="$wine_root/lib/gstreamer-1.0:$metal_runtime/external:$metal_runtime/wine/x86_64-unix:$wine_root/lib/wine/x86_64-unix:$wine_root/lib:$wine_root/lib/dxmt/x86_64-unix"
-    export DYLD_FALLBACK_LIBRARY_PATH="$DYLD_LIBRARY_PATH"
-    wine_command=("$wine_exe" "$launcher")
-    ;;
-  crossover)
-    wine_exe="$runtime_app/Contents/SharedSupport/CrossOver/bin/wine"
-    if [[ ! -x "$wine_exe" ]]; then
-      print -u2 "CrossOver wine wrapper not found: $wine_exe"
-      exit 1
-    fi
-    # CrossOver's wrapper configures the bottle and its graphics backend.
-    wine_command=("$wine_exe" --bottle "$bottle" --cx-app "$launcher" --)
-    ;;
-  *)
-    print -u2 "Unknown runtime: $engine"
-    exit 2
-    ;;
-esac
+    wine_exe="$crossover_app/Contents/SharedSupport/CrossOver/bin/wine"
+  fi
+  wine_command=("$wine_exe" --bottle "${prefix:t}" --cx-app "$launcher" --)
+else
+  wine_exe="${WINE:-}"
+  wine_command=("$wine_exe" "$launcher")
+fi
+if [[ ! -x "$wine_exe" ]]; then
+  print -u2 'Start Windows Steam in the same Wine bottle before connecting.'
+  exit 1
+fi
 
 cd "$game_bin"
 run_launcher() { "${wine_command[@]}" "$@"; }
