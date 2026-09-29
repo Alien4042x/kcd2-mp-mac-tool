@@ -1,0 +1,5 @@
+.build/
+KCDMP Mac.app/
+.DS_Store
+*.xcuserstate
+xcuserdata/

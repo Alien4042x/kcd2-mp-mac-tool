@@ -1,0 +1,63 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A10000000000000000000001 /* Main.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000004 /* Main.swift */; };
+		A10000000000000000000002 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000005 /* Assets.xcassets */; };
+		A10000000000000000000003 /* kcdmp-launch.sh in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000006 /* kcdmp-launch.sh */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		A10000000000000000000004 /* Main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Main.swift; sourceTree = "<group>"; };
+		A10000000000000000000005 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A10000000000000000000006 /* kcdmp-launch.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = kcdmp-launch.sh; sourceTree = "<group>"; };
+		A10000000000000000000007 /* KCDMP Mac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "KCDMP Mac.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A10000000000000000000008 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A10000000000000000000009 = {isa = PBXGroup; children = (A10000000000000000000004 /* Main.swift */, A10000000000000000000005 /* Assets.xcassets */, A10000000000000000000006 /* kcdmp-launch.sh */, A1000000000000000000000A /* Products */); sourceTree = "<group>"; };
+		A1000000000000000000000A /* Products */ = {isa = PBXGroup; children = (A10000000000000000000007 /* KCDMP Mac.app */); name = Products; sourceTree = "<group>"; };
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A1000000000000000000000B /* KCDMP Mac */ = {isa = PBXNativeTarget; buildConfigurationList = A10000000000000000000015 /* Build configuration list for PBXNativeTarget "KCDMP Mac" */; buildPhases = (A1000000000000000000000C /* Sources */, A10000000000000000000008 /* Frameworks */, A1000000000000000000000D /* Resources */, A1000000000000000000000E /* Make launcher executable */); buildRules = (); dependencies = (); name = "KCDMP Mac"; productName = "KCDMP Mac"; productReference = A10000000000000000000007 /* KCDMP Mac.app */; productType = "com.apple.product-type.application"; };
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A1000000000000000000000F /* Project object */ = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = YES; LastUpgradeCheck = 2700; TargetAttributes = {A1000000000000000000000B = {CreatedOnToolsVersion = 27.0; }; }; }; buildConfigurationList = A10000000000000000000016 /* Build configuration list for PBXProject "KCDMP Mac" */; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = A10000000000000000000009; productRefGroup = A1000000000000000000000A /* Products */; projectDirPath = ""; projectRoot = ""; targets = (A1000000000000000000000B /* KCDMP Mac */); };
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A1000000000000000000000D /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000002 /* Assets.xcassets in Resources */, A10000000000000000000003 /* kcdmp-launch.sh in Resources */); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		A1000000000000000000000E /* Make launcher executable */ = {isa = PBXShellScriptBuildPhase; alwaysOutOfDate = 1; buildActionMask = 2147483647; files = (); inputPaths = (); name = "Make launcher executable"; outputPaths = (); runOnlyForDeploymentPostprocessing = 0; shellPath = /bin/sh; shellScript = "chmod +x \"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/kcdmp-launch.sh\"\n"; };
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A1000000000000000000000C /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000001 /* Main.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		A10000000000000000000011 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 2; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = "KCD:MP for Mac"; INFOPLIST_KEY_LSMinimumSystemVersion = 14.0; INFOPLIST_KEY_NSHighResolutionCapable = YES; MACOSX_DEPLOYMENT_TARGET = 14.0; MARKETING_VERSION = 2.0; PRODUCT_BUNDLE_IDENTIFIER = local.kcdmp.maclauncher.xcode; PRODUCT_NAME = "KCDMP Mac"; SWIFT_VERSION = 5.0; }; name = Debug; };
+		A10000000000000000000012 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 2; ENABLE_HARDENED_RUNTIME = YES; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = "KCD:MP for Mac"; INFOPLIST_KEY_LSMinimumSystemVersion = 14.0; INFOPLIST_KEY_NSHighResolutionCapable = YES; MACOSX_DEPLOYMENT_TARGET = 14.0; MARKETING_VERSION = 2.0; PRODUCT_BUNDLE_IDENTIFIER = local.kcdmp.maclauncher.xcode; PRODUCT_NAME = "KCDMP Mac"; SWIFT_VERSION = 5.0; }; name = Release; };
+		A10000000000000000000013 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; CODE_SIGNING_ALLOWED = YES; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_TESTABILITY = YES; GCC_OPTIMIZATION_LEVEL = 0; SDKROOT = macosx; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; }; name = Debug; };
+		A10000000000000000000014 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; CODE_SIGNING_ALLOWED = YES; DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym"; SDKROOT = macosx; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; }; name = Release; };
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A10000000000000000000015 /* Build configuration list for PBXNativeTarget "KCDMP Mac" */ = {isa = XCConfigurationList; buildConfigurations = (A10000000000000000000011 /* Debug */, A10000000000000000000012 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		A10000000000000000000016 /* Build configuration list for PBXProject "KCDMP Mac" */ = {isa = XCConfigurationList; buildConfigurations = (A10000000000000000000013 /* Debug */, A10000000000000000000014 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+/* End XCConfigurationList section */
+	};
+	rootObject = A1000000000000000000000F /* Project object */;
+}
