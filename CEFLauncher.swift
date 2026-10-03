@@ -33,22 +33,17 @@ struct CEFLaunchPlan {
 }
 
 enum CEFLauncher {
-    static let supportedClientHash = "953ea2ee442f81f79840b0cf6b9d4c3ba26c6d91e630e9980a4788a3d09868d1"
+    static let supportedVersion = "0.38.0"
+    static let supportedClientHash = "20740fd5c119f7ba90a5137bbde62e5e43cd6b2d256e7996f945873842478a80"
     private static let expectedLauncherSuffix = "program files (x86)/steam/steamapps/common/kingdomcomedeliverance2/bin/win64mastermastersteampgo/kcdmp_launcher.exe"
 
-    static func connectionArguments(launcher: URL, address: String, name: String, password: String) -> [String] {
-        [launcher.path, "--connect", address, "--name", name]
-            + (password.isEmpty ? [] : ["--token", password]) + ["--wait"]
-    }
-
-    static func preflight(launcherPath: String, steamEnvironment: [String: String], resourceURL: URL) throws -> CEFLaunchPlan {
+    private static func selectedClient(launcherPath: String) throws -> (launcher: URL, client: URL, prefix: URL) {
         let launcher = URL(fileURLWithPath: launcherPath).standardizedFileURL.resolvingSymlinksInPath()
         guard launcher.lastPathComponent == "KcdMp_launcher.exe",
               let bottleRange = launcher.path.range(of: "/drive_c/"),
               String(launcher.path[bottleRange.upperBound...]).lowercased() == expectedLauncherSuffix else {
             throw CEFLaunchError.message("Select KcdMp_launcher.exe in the Steam installation of KCD2.")
         }
-        let prefix = URL(fileURLWithPath: String(launcher.path[..<bottleRange.lowerBound]))
         let gameDirectory = launcher.deletingLastPathComponent()
         guard FileManager.default.fileExists(atPath: launcher.path),
               FileManager.default.fileExists(atPath: gameDirectory.appendingPathComponent("KingdomCome.exe").path) else {
@@ -58,10 +53,93 @@ enum CEFLauncher {
         guard FileManager.default.fileExists(atPath: client.path) else {
             throw CEFLaunchError.message("KcdMp_client.dll is missing next to the selected MP launcher.")
         }
-        let digest = SHA256.hash(data: try Data(contentsOf: client))
-            .map { String(format: "%02x", $0) }.joined()
+        let prefix = URL(fileURLWithPath: String(launcher.path[..<bottleRange.lowerBound]))
+        return (launcher, client, prefix)
+    }
+
+    private static func clientHash(_ client: URL) throws -> String {
+        SHA256.hash(data: try Data(contentsOf: client)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func officialUpdate(_ action: String, launcher: URL,
+                                       steamEnvironment: [String: String]) throws -> String {
+        let wine = URL(fileURLWithPath: steamEnvironment["WINE"] ?? "")
+        guard wine.lastPathComponent == "wine", FileManager.default.isExecutableFile(atPath: wine.path) else {
+            throw CEFLaunchError.message("Start Windows Steam in this WineForge bottle before connecting.")
+        }
+        let process = Process()
+        process.executableURL = wine
+        process.arguments = [launcher.path, action]
+        process.currentDirectoryURL = launcher.deletingLastPathComponent()
+        var environment = ProcessInfo.processInfo.environment
+        environment.merge(steamEnvironment) { _, steamValue in steamValue }
+        environment.removeValue(forKey: "WINELOADERNOEXEC")
+        process.environment = environment
+        let outputURL = URL(fileURLWithPath: "/private/tmp/kcdmp-updater-\(UUID().uuidString).log")
+        let descriptor = open(outputURL.path, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR)
+        guard descriptor >= 0 else { throw CEFLaunchError.message("Could not create the KCD:MP updater log.") }
+        let outputFile = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        defer {
+            try? outputFile.close()
+            try? FileManager.default.removeItem(at: outputURL)
+        }
+        process.standardOutput = outputFile
+        process.standardError = outputFile
+        try process.run()
+        let deadline = Date().addingTimeInterval(action == "--update" ? 600 : 20)
+        while process.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.1) }
+        if process.isRunning {
+            process.terminate()
+            process.waitUntilExit()
+            throw CEFLaunchError.message("KCD:MP update \(action == "--update" ? "download" : "check") timed out.")
+        }
+        process.waitUntilExit()
+        let output = (try? Data(contentsOf: outputURL)).map { String(decoding: $0, as: UTF8.self) } ?? ""
+        guard process.terminationStatus == 0 else {
+            throw CEFLaunchError.message("KCD:MP updater exited with code \(process.terminationStatus): \(output.trimmingCharacters(in: .whitespacesAndNewlines))")
+        }
+        return output
+    }
+
+    private static func ensureSupportedClient(launcherPath: String,
+                                              steamEnvironment: [String: String],
+                                              status: (String) -> Void) throws {
+        let selected = try selectedClient(launcherPath: launcherPath)
+        status("Checking KCD:MP updates…")
+        let check = try officialUpdate("--update-check", launcher: selected.launcher,
+                                       steamEnvironment: steamEnvironment)
+        guard let versionLine = check.split(whereSeparator: \.isNewline)
+            .first(where: { $0.hasPrefix("newest release: ") }),
+              let latest = versionLine.dropFirst("newest release: ".count).split(separator: " ").first,
+              latest.range(of: #"^[0-9]+\.[0-9]+\.[0-9]+$"#, options: .regularExpression) != nil else {
+            throw CEFLaunchError.message("Could not read the KCD:MP updater's version response.")
+        }
+        guard String(latest) == supportedVersion else {
+            throw CEFLaunchError.message("KCD:MP \(latest) is available. This Mac build supports \(supportedVersion). A matching CEF helper is needed before connecting.")
+        }
+        if try clientHash(selected.client) != supportedClientHash {
+            status("Updating KCD:MP to \(supportedVersion)…")
+            _ = try officialUpdate("--update", launcher: selected.launcher,
+                                   steamEnvironment: steamEnvironment)
+            guard try clientHash(selected.client) == supportedClientHash else {
+                throw CEFLaunchError.message("KCD:MP updated, but its client does not match the verified \(supportedVersion) build.")
+            }
+        }
+    }
+
+    static func connectionArguments(launcher: URL, address: String, name: String, password: String) -> [String] {
+        [launcher.path, "--connect", address, "--name", name]
+            + (password.isEmpty ? [] : ["--token", password]) + ["--wait"]
+    }
+
+    static func preflight(launcherPath: String, steamEnvironment: [String: String], resourceURL: URL) throws -> CEFLaunchPlan {
+        let selected = try selectedClient(launcherPath: launcherPath)
+        let launcher = selected.launcher
+        let prefix = selected.prefix
+        let gameDirectory = launcher.deletingLastPathComponent()
+        let digest = try clientHash(selected.client)
         guard digest == supportedClientHash else {
-            throw CEFLaunchError.message("CEF compatibility supports only KCD:MP 0.37.0. The installed client was left unchanged.")
+            throw CEFLaunchError.message("CEF compatibility supports only the verified KCD:MP \(supportedVersion) client.")
         }
 
         let databaseURL = FileManager.default.homeDirectoryForCurrentUser
@@ -143,6 +221,7 @@ enum CEFLauncher {
     static func run(launcherPath: String, address: String, name: String, password: String,
                     steamEnvironment: [String: String], resourceURL: URL,
                     status: (String) -> Void) throws {
+        try ensureSupportedClient(launcherPath: launcherPath, steamEnvironment: steamEnvironment, status: status)
         let plan = try preflight(launcherPath: launcherPath, steamEnvironment: steamEnvironment, resourceURL: resourceURL)
         let fileManager = FileManager.default
         let original = try jsonObject(at: plan.preferences)
@@ -193,7 +272,7 @@ enum CEFLauncher {
             enabled["server_ui"] = true
             try writePreferences(enabled, to: plan.preferences)
             preferencesChanged = true
-            status("Connecting with KCD:MP 0.37.0 CEF…")
+            status("Connecting with KCD:MP \(supportedVersion) CEF…")
 
             let gameLaunch = Process()
             gameLaunch.executableURL = plan.wine
@@ -271,6 +350,9 @@ enum CEFLauncher {
 
     private static func earlyLauncherFailure(logURL: URL) -> CEFLaunchError {
         let log = (try? Data(contentsOf: logURL)).map { String(decoding: $0, as: UTF8.self) } ?? ""
+        if log.contains("protocol") && log.contains("not supported") {
+            return .message("The server requires a newer KCD:MP client and matching Mac CEF helper. Log: \(logURL.path)")
+        }
         if log.contains("no answer within") {
             return .message("The server did not answer. Choose another server. Log: \(logURL.path)")
         }

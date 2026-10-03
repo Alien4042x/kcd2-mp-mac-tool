@@ -4,13 +4,15 @@ from pathlib import Path
 import hashlib
 import json
 import os
+import re
 import struct
 import subprocess
 
 BASE = Path(__file__).resolve().parent
 CLIENT = Path(os.environ.get('KCDMP_CLIENT_DLL', str(Path.home()/'WineForge/Steam/drive_c/Program Files (x86)/Steam/steamapps/common/KingdomComeDeliverance2/Bin/Win64MasterMasterSteamPGO/KcdMp_client.dll'))).expanduser()
 TOOLCHAIN = Path(os.environ.get('KCDMP_LLVM_MINGW', str(Path.home()/'llvm-mingw'))).expanduser()
-EXPECTED_SHA = '953ea2ee442f81f79840b0cf6b9d4c3ba26c6d91e630e9980a4788a3d09868d1'
+EXPECTED_SHA = os.environ.get('KCDMP_TARGET_SHA256', '')
+TARGET_VERSION = os.environ.get('KCDMP_TARGET_VERSION', '')
 SYMBOLS = {
     'frames_open':'_ZN5KcdMp3web6frames4openE5_LUIDRNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE',
     'frames_paint':'_ZN5KcdMp3web6frames9paint_cpuEPKvii',
@@ -40,6 +42,10 @@ READ_SYMBOLS = {
 READ_CHECKS = {'set_loading_cover_probe':8, 'loading_wants_paint':13}
 
 def main():
+    if not re.fullmatch(r'[0-9a-f]{64}', EXPECTED_SHA):
+        raise SystemExit('Set KCDMP_TARGET_SHA256 to the exact reviewed client SHA-256')
+    if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', TARGET_VERSION):
+        raise SystemExit('Set KCDMP_TARGET_VERSION to the exact reviewed release version')
     b = CLIENT.read_bytes()
     sha = hashlib.sha256(b).hexdigest()
     if sha != EXPECTED_SHA: raise SystemExit('Refusing unsupported client SHA-256')
@@ -62,6 +68,8 @@ def main():
     if fixed >= 0:
         ms, ls = struct.unpack_from('<II',b,fixed+8)
         version = '.'.join(map(str,[ms>>16,ms&65535,ls>>16,ls&65535]))
+    if version != TARGET_VERSION + '.0':
+        raise SystemExit(f'Client file version {version!r} does not match requested {TARGET_VERSION}.0')
     entries = []
     for label, symbol in SYMBOLS.items():
         address = symbols[symbol]; rva = address-image_base
@@ -79,12 +87,12 @@ def main():
         offset = raw+rva-va
         read_checks.append(dict(name=label,rva=rva,raw_offset=offset,section=section,
             original=b[offset:offset+length].hex(),length=length,replacement=None))
-    manifest = dict(product='KCD:MP 0.37.0', file_version=version, machine=machine,
+    manifest = dict(product=f'KCD:MP {TARGET_VERSION}', file_version=version, machine=machine,
         image_base=image_base,image_size=image_size,timestamp=timestamp,sha256=sha,
         process_path='C:\\Program Files (x86)\\Steam\\steamapps\\common\\KingdomComeDeliverance2\\Bin\\Win64MasterMasterSteamPGO\\KingdomCome.exe',
         module_name='KcdMp_client.dll',client_disk_unchanged=True,patches=entries,
         read_bindings={name:symbols[s]-image_base for name,s in READ_SYMBOLS.items()},read_checks=read_checks)
-    (BASE/'target-0.37.0.json').write_text(json.dumps(manifest,indent=2)+'\n')
+    (BASE/f'target-{TARGET_VERSION}.json').write_text(json.dumps(manifest,indent=2)+'\n')
     lines=['// Generated from the exact supported client. Never hand-update RVAs.', '#pragma once', '#include <cstdint>', 'namespace target {',
         f'constexpr uint32_t image_size = {image_size}u;', f'constexpr uint32_t timestamp = {timestamp}u;',
         f'constexpr char client_sha[] = "{sha}";',
@@ -101,7 +109,7 @@ def main():
         lines.append(f'    {{"{item["name"]}", 0x{item["rva"]:x}, {item["length"]}u, {{{array}}}}},')
     lines += ['};']
     lines += ['}']
-    (BASE/'target-0.37.0.h').write_text('\n'.join(lines)+'\n')
+    (BASE/f'target-{TARGET_VERSION}.h').write_text('\n'.join(lines)+'\n')
     print(f'TARGET|AMD64|SHA256={sha}|patches={len(entries)}|version={version}')
 
 if __name__ == '__main__': main()

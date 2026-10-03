@@ -89,7 +89,7 @@ func helperURL() throws -> URL {
                 let launchID = UUID()
                 activeCEFLaunchID = launchID
                 gameRunning = true
-                actionStatus = "Checking KCD:MP 0.37.0 compatibility…"
+                actionStatus = "Checking KCD:MP compatibility…"
                 DispatchQueue.global(qos: .utility).async { [weak self] in
                     do {
                         try CEFLauncher.run(launcherPath: launcherPath, address: address, name: name,

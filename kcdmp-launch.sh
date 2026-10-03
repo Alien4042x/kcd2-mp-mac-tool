@@ -126,6 +126,7 @@ if [[ ! -x "$wine_exe" ]]; then
 fi
 
 cd "$game_bin"
+unset WINELOADERNOEXEC
 run_launcher() { "${wine_command[@]}" "$@"; }
 
 case "${1:---browse}" in

@@ -1,4 +1,4 @@
-// Experimental KCD:MP 0.37.0 application-only CPU frame bridge.
+// Experimental KCD:MP 0.38.0 application-only CPU frame bridge.
 // DllMain stays passive. No Wine patches or integrity-check modifications.
 #include "cpu_bridge.h"
 #include "patch_guard.h"
