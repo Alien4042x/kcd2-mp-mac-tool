@@ -27,4 +27,13 @@ constexpr uint32_t shown = 0xb2d460;
 constexpr uint32_t pipeline_failed = 0xb2d440;
 constexpr uint32_t frames_drawn = 0xb2d45c;
 constexpr uint32_t frame_device = 0xb2e928;
+constexpr uint32_t set_loading_cover_probe = 0x36dc40;
+constexpr uint32_t loading_wants_paint = 0x3ce9a0;
+constexpr uint32_t loading_cover_probe = 0xb2bba8;
+constexpr uint32_t loading_wants_paint_flag = 0xb2d260;
+struct ReadEntry { const char *name; uint32_t rva, length; unsigned char bytes[13]; };
+constexpr ReadEntry read_entries[] = {
+    {"set_loading_cover_probe", 0x36dc40, 8u, {0x48, 0x87, 0x0d, 0x61, 0xdf, 0x7b, 0x00, 0xc3}},
+    {"loading_wants_paint", 0x3ce9a0, 13u, {0x0f, 0xb6, 0x05, 0xb9, 0xe8, 0x75, 0x00, 0x84, 0xc0, 0x0f, 0x95, 0xc0, 0xc3}},
+};
 }

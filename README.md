@@ -2,7 +2,7 @@
 
 A small native macOS launcher for [KCD:MP](https://kcd-mp.com/). It shows multiplayer servers and starts the official Windows KCD:MP client in the same bottle as a running Windows Steam client. You need your own Steam copy of Kingdom Come: Deliverance II. This repository does not include the game or the multiplayer client.
 
-**CEF support is experimental.** The bundled compatibility helper currently supports only the exact KCD:MP 0.37.0 client in WineForge. One game startup crashed before CEF rendered, while a later run displayed the game world and CEF interface. This build is for local testing, not a stable public release.
+**CEF support is experimental.** The bundled compatibility helper currently supports only the exact KCD:MP 0.37.0 client in WineForge. Several launches rendered the game and CEF interface, while others crashed during CEF startup after the helper loaded. This build is for local testing, not a stable public release.
 
 ## Install
 
@@ -27,6 +27,8 @@ A small native macOS launcher for [KCD:MP](https://kcd-mp.com/). It shows multip
 For a private server, enter its password. To join by address, use the **Direct address** field with `host:port`. Older server versions appear in orange.
 
 The Mac app uses the running Steam process to identify the selected bottle. The CEF helper checks that WineForge is using its configured D3DMetal backend and refuses an unsupported client version before starting the game. It temporarily enables KCD:MP's `server_ui` preference and restores its previous value after the game exits or a handled launch error. A forced app quit or system shutdown can prevent that restoration.
+
+After the game closes, you can click **Connect** again in the same Mac app window. If Wine opens its debugger after a game crash, close that game or debugger before retrying. Steam can stay open. The app keeps Connect disabled while the previous game process is still running and reports a game crash separately from a refused CEF injection. The current helper also keeps the original loading screen on this Mac while a level loads. That loading change has passed isolated checks but has not yet been verified in the game.
 
 CrossOver still uses the original launch path without the CEF helper. Its command receives a Windows `C:\...` path to the selected launcher. That command format was checked against the installed CrossOver wrapper and [CodeWeavers' guide](https://www.codeweavers.com/support/docs/crossover-mac/index). There is no KCD2 installation in a CrossOver bottle here, so actual game launch and CEF behavior in CrossOver are not yet verified.
 

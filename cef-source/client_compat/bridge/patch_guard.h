@@ -27,6 +27,10 @@ inline DWORD validate_image(unsigned char *base, size_t capacity, const PatchByt
         pe->FileHeader.TimeDateStamp != target::timestamp || pe->OptionalHeader.SizeOfImage != target::image_size ||
         pe->OptionalHeader.SizeOfImage > capacity) return ERROR_REVISION_MISMATCH;
     bool all_original = true, all_replaced = true;
+    for (const auto &entry : target::read_entries) {
+        if (entry.length > sizeof(entry.bytes) || entry.rva > capacity - entry.length) return ERROR_BAD_EXE_FORMAT;
+        if (std::memcmp(base + entry.rva, entry.bytes, entry.length) != 0) return ERROR_INVALID_DATA;
+    }
     for (size_t i = 0; i < patch_count; ++i) {
         const auto &entry = target::entries[i];
         if (entry.rva > capacity - 14 || entry.end > capacity || entry.end < entry.rva + 14) return ERROR_BAD_EXE_FORMAT;

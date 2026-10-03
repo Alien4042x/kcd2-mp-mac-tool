@@ -32,7 +32,12 @@ READ_SYMBOLS = {
     'pipeline_failed':'_ZN5KcdMp3web10compositor12_GLOBAL__N_117g_pipeline_failedE',
     'frames_drawn':'_ZN5KcdMp3web10compositor12_GLOBAL__N_18g_framesE',
     'frame_device':'_ZN5KcdMp3web6frames12_GLOBAL__N_18g_deviceE',
+    'set_loading_cover_probe':'_ZN5KcdMp2ui14loading_screen19set_web_cover_probeEPFbvE',
+    'loading_wants_paint':'_ZN5KcdMp3web15components_host19loading_wants_paintEv',
+    'loading_cover_probe':'_ZN5KcdMp2ui14loading_screen12_GLOBAL__N_113g_cover_probeE',
+    'loading_wants_paint_flag':'_ZN5KcdMp3web15components_host6detail12_GLOBAL__N_113g_wants_paintE',
 }
+READ_CHECKS = {'set_loading_cover_probe':8, 'loading_wants_paint':13}
 
 def main():
     b = CLIENT.read_bytes()
@@ -67,11 +72,18 @@ def main():
         entries.append(dict(name=label,symbol=symbol,rva=rva,raw_offset=offset,section=name,
             original=original.hex(),signature_occurrences=b.count(original),function_end=next_address-image_base,
             replacement='ff2500000000 + uint64 little-endian helper entry VA',length=14))
+    read_checks = []
+    for label, length in READ_CHECKS.items():
+        rva = symbols[READ_SYMBOLS[label]]-image_base
+        section, va, _, raw = next(s for s in sections if s[1] <= rva < s[1]+s[2])
+        offset = raw+rva-va
+        read_checks.append(dict(name=label,rva=rva,raw_offset=offset,section=section,
+            original=b[offset:offset+length].hex(),length=length,replacement=None))
     manifest = dict(product='KCD:MP 0.37.0', file_version=version, machine=machine,
         image_base=image_base,image_size=image_size,timestamp=timestamp,sha256=sha,
         process_path='C:\\Program Files (x86)\\Steam\\steamapps\\common\\KingdomComeDeliverance2\\Bin\\Win64MasterMasterSteamPGO\\KingdomCome.exe',
         module_name='KcdMp_client.dll',client_disk_unchanged=True,patches=entries,
-        read_bindings={name:symbols[s]-image_base for name,s in READ_SYMBOLS.items()})
+        read_bindings={name:symbols[s]-image_base for name,s in READ_SYMBOLS.items()},read_checks=read_checks)
     (BASE/'target-0.37.0.json').write_text(json.dumps(manifest,indent=2)+'\n')
     lines=['// Generated from the exact supported client. Never hand-update RVAs.', '#pragma once', '#include <cstdint>', 'namespace target {',
         f'constexpr uint32_t image_size = {image_size}u;', f'constexpr uint32_t timestamp = {timestamp}u;',
@@ -83,6 +95,11 @@ def main():
         lines.append(f'    {{"{item["name"]}", 0x{item["rva"]:x}, 0x{item["function_end"]:x}, {{{array}}}}},')
     lines += ['};']
     for name, rva in manifest['read_bindings'].items(): lines.append(f'constexpr uint32_t {name} = 0x{rva:x};')
+    lines += ['struct ReadEntry { const char *name; uint32_t rva, length; unsigned char bytes[13]; };', 'constexpr ReadEntry read_entries[] = {']
+    for item in read_checks:
+        array=', '.join('0x'+item['original'][i:i+2] for i in range(0,item['length']*2,2))
+        lines.append(f'    {{"{item["name"]}", 0x{item["rva"]:x}, {item["length"]}u, {{{array}}}}},')
+    lines += ['};']
     lines += ['}']
     (BASE/'target-0.37.0.h').write_text('\n'.join(lines)+'\n')
     print(f'TARGET|AMD64|SHA256={sha}|patches={len(entries)}|version={version}')

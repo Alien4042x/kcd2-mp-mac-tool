@@ -16,6 +16,7 @@ unsigned char *client = nullptr;
 SRWLOCK init_lock = SRWLOCK_INIT;
 bool active = false;
 volatile LONG failed = 0;
+bool native_loading_held = false;
 struct Published { uint32_t ring; int32_t slot; uint64_t value; uint32_t width, height; };
 static_assert(sizeof(Published) == 24);
 
@@ -61,12 +62,27 @@ bool latest(Published &published) {
     published = {1, 0, sequence, w, h};
     return true;
 }
+bool native_loading_cover() { return false; }
+void retain_native_loading() {
+    // Original client API, verified against this exact image. No additional
+    // entry jump: only replace its atomic loading-cover callback on this Mac.
+    auto set_probe = reinterpret_cast<void (*)(bool (*)())>(client + target::set_loading_cover_probe);
+    set_probe(&native_loading_cover);
+}
 void record(ID3D12GraphicsCommandList *commands, unsigned w, unsigned h) {
     atomic_exchange8(reinterpret_cast<volatile char *>(client + target::shown), 0);
     if (InterlockedCompareExchange(&failed, 0, 0) || !__atomic_load_n(client + target::enabled, __ATOMIC_ACQUIRE)) return;
+    retain_native_loading();
     auto loading = reinterpret_cast<bool (*)()>(client + target::loading_visible);
-    auto covers = reinterpret_cast<bool (*)()>(client + target::loading_covers);
-    if (loading() && !covers()) return;
+    auto wants_paint = reinterpret_cast<bool (*)()>(client + target::loading_wants_paint);
+    // Keep the web loading's final fade out of the game too. The engine clears
+    // wants_paint when that drawer leaves, before in-game frames resume.
+    bool hold = loading() || wants_paint();
+    if (hold != native_loading_held) {
+        native_loading_held = hold;
+        log_line(hold ? "original native loading retained locally" : "loading ended, normal CEF composition resumed");
+    }
+    if (hold) return;
     auto info = reinterpret_cast<const unsigned char *(*)()>(client + target::render_info)();
     if (!info) return;
     ID3D12Device *device = nullptr; DXGI_FORMAT format;
@@ -268,7 +284,7 @@ DWORD initialize() {
     client = base;
     bool remaining = false;
     result = apply_patch_set(base, patches, &remaining);
-    if (!result) active = true;
+    if (!result) { active = true; retain_native_loading(); }
     else if (remaining) {
         // Keep callback context alive if the OS could not complete rollback.
         active = true;

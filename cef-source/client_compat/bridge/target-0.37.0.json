@@ -139,6 +139,30 @@
     "shown": 11719776,
     "pipeline_failed": 11719744,
     "frames_drawn": 11719772,
-    "frame_device": 11725096
-  }
+    "frame_device": 11725096,
+    "set_loading_cover_probe": 3595328,
+    "loading_wants_paint": 3991968,
+    "loading_cover_probe": 11713448,
+    "loading_wants_paint_flag": 11719264
+  },
+  "read_checks": [
+    {
+      "name": "set_loading_cover_probe",
+      "rva": 3595328,
+      "raw_offset": 3592256,
+      "section": ".text",
+      "original": "48870d61df7b00c3",
+      "length": 8,
+      "replacement": null
+    },
+    {
+      "name": "loading_wants_paint",
+      "rva": 3991968,
+      "raw_offset": 3988896,
+      "section": ".text",
+      "original": "0fb605b9e8750084c00f95c0c3",
+      "length": 13,
+      "replacement": null
+    }
+  ]
 }

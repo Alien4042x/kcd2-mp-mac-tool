@@ -145,14 +145,7 @@ enum CEFLauncher {
                     status: (String) -> Void) throws {
         let plan = try preflight(launcherPath: launcherPath, steamEnvironment: steamEnvironment, resourceURL: resourceURL)
         let fileManager = FileManager.default
-        let stage = URL(fileURLWithPath: "/private/tmp", isDirectory: true)
-            .appendingPathComponent("kcdmp-cef-session-" + UUID().uuidString)
-        try fileManager.createDirectory(at: stage, withIntermediateDirectories: false)
-        var watcher: Process?
-        defer {
-            if watcher?.isRunning != true { try? fileManager.removeItem(at: stage) }
-        }
-        let ready = stage.appendingPathComponent("watcher.ready")
+        let original = try jsonObject(at: plan.preferences)
         let logDirectory = fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/KCDMP CEF")
         try fileManager.createDirectory(at: logDirectory, withIntermediateDirectories: true,
                                         attributes: [.posixPermissions: 0o700])
@@ -161,7 +154,16 @@ enum CEFLauncher {
         guard descriptor >= 0 else { throw CEFLaunchError.message("Could not create the CEF launch log.") }
         let logHandle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
         defer { try? logHandle.close() }
-        let original = try jsonObject(at: plan.preferences)
+        let stage = URL(fileURLWithPath: "/private/tmp", isDirectory: true)
+            .appendingPathComponent("kcdmp-cef-session-" + UUID().uuidString)
+        try fileManager.createDirectory(at: stage, withIntermediateDirectories: false)
+        var watcher: Process?
+        var launcher: Process?
+        defer {
+            stopWatcher(watcher)
+            try? fileManager.removeItem(at: stage)
+        }
+        let ready = stage.appendingPathComponent("watcher.ready")
         var preferencesChanged = false
         var failure: Error?
 
@@ -181,7 +183,7 @@ enum CEFLauncher {
             let readyDeadline = Date().addingTimeInterval(15)
             while !fileManager.fileExists(atPath: ready.path) {
                 if !watch.isRunning {
-                    throw CEFLaunchError.message("The CEF watcher refused startup. Close any existing game and see \(logURL.path)")
+                    throw CEFLaunchError.message("The CEF watcher refused startup. Close any existing KCD2 game or Wine debugger, then retry. Steam can stay open. Log: \(logURL.path)")
                 }
                 if Date() >= readyDeadline { throw CEFLaunchError.message("CEF watcher readiness timed out. See \(logURL.path)") }
                 Thread.sleep(forTimeInterval: 0.05)
@@ -193,35 +195,46 @@ enum CEFLauncher {
             preferencesChanged = true
             status("Connecting with KCD:MP 0.37.0 CEF…")
 
-            let launcher = Process()
-            launcher.executableURL = plan.wine
-            launcher.arguments = connectionArguments(launcher: plan.launcher, address: address,
-                                                     name: name, password: password)
-            launcher.currentDirectoryURL = plan.gameDirectory
-            launcher.environment = plan.environment
-            launcher.standardOutput = logHandle
-            launcher.standardError = logHandle
-            try launcher.run()
+            let gameLaunch = Process()
+            gameLaunch.executableURL = plan.wine
+            gameLaunch.arguments = connectionArguments(launcher: plan.launcher, address: address,
+                                                       name: name, password: password)
+            gameLaunch.currentDirectoryURL = plan.gameDirectory
+            gameLaunch.environment = plan.environment
+            gameLaunch.standardOutput = logHandle
+            gameLaunch.standardError = logHandle
+            try gameLaunch.run()
+            launcher = gameLaunch
 
             let injectionDeadline = Date().addingTimeInterval(150)
             while watch.isRunning {
-                if !launcher.isRunning {
+                if !gameLaunch.isRunning {
                     throw earlyLauncherFailure(logURL: logURL)
                 }
                 if Date() >= injectionDeadline { throw CEFLaunchError.message("CEF loading timed out. Log: \(logURL.path)") }
                 Thread.sleep(forTimeInterval: 0.05)
             }
-            if !launcher.isRunning { throw earlyLauncherFailure(logURL: logURL) }
+            if !gameLaunch.isRunning { throw earlyLauncherFailure(logURL: logURL) }
             guard watch.terminationStatus == 0 else {
                 throw CEFLaunchError.message("CEF loading was refused. Log: \(logURL.path)")
             }
             status("CEF loaded. Waiting for the game to close…")
-            launcher.waitUntilExit()
-            if launcher.terminationStatus != 0 {
-                throw CEFLaunchError.message("KCD:MP exited with code \(launcher.terminationStatus). Log: \(logURL.path)")
+            gameLaunch.waitUntilExit()
+            if gameLaunch.terminationStatus != 0 {
+                let log = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                if log.contains("Unhandled page fault") || log.contains("crash: dump written") {
+                    throw CEFLaunchError.message("The game crashed after CEF loaded. Close the Wine debugger, then try Connect again. Steam can stay open. Log: \(logURL.path)")
+                }
+                throw CEFLaunchError.message("KCD:MP exited with code \(gameLaunch.terminationStatus). Log: \(logURL.path)")
             }
         } catch {
             failure = error
+        }
+
+        if failure != nil, let launcher, launcher.isRunning {
+            stopWatcher(watcher)
+            status("The previous game is still open. Close only that game or its Wine debugger to retry Connect. Steam can stay open.")
+            launcher.waitUntilExit()
         }
 
         if preferencesChanged {
@@ -235,12 +248,18 @@ enum CEFLauncher {
                 else { status("Could not restore KCD:MP preferences. See \(logURL.path)") }
             }
         }
-        if let watcher, watcher.isRunning {
+        if let failure { throw failure }
+    }
+
+    private static func stopWatcher(_ watcher: Process?) {
+        guard let watcher else { return }
+        if watcher.isRunning {
             watcher.terminate()
             let deadline = Date().addingTimeInterval(5)
             while watcher.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
+            if watcher.isRunning { _ = Darwin.kill(watcher.processIdentifier, SIGKILL) }
         }
-        if let failure { throw failure }
+        watcher.waitUntilExit()
     }
 
     private static func jsonObject(at url: URL) throws -> [String: Any] {

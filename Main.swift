@@ -49,6 +49,7 @@ func helperURL() throws -> URL {
     @Published var actionStatus = "Select a server and connect."
     @Published var gameRunning = false
     private var gameProcess: Process?
+    private var activeCEFLaunchID: UUID?
 
     func refreshServers() async {
         guard !isRefreshing else { return }
@@ -85,6 +86,8 @@ func helperURL() throws -> URL {
                                          launcherPath: launcherPath, steamEnvironment: steamEnvironment)
             } else {
                 guard let resources = Bundle.main.resourceURL else { throw LaunchError.missingHelper }
+                let launchID = UUID()
+                activeCEFLaunchID = launchID
                 gameRunning = true
                 actionStatus = "Checking KCD:MP 0.37.0 compatibility…"
                 DispatchQueue.global(qos: .utility).async { [weak self] in
@@ -92,14 +95,21 @@ func helperURL() throws -> URL {
                         try CEFLauncher.run(launcherPath: launcherPath, address: address, name: name,
                                             password: password, steamEnvironment: steamEnvironment,
                                             resourceURL: resources) { message in
-                            Task { @MainActor [weak self] in self?.actionStatus = message }
+                            Task { @MainActor [weak self] in
+                                guard self?.activeCEFLaunchID == launchID else { return }
+                                self?.actionStatus = message
+                            }
                         }
                         Task { @MainActor [weak self] in
+                            guard self?.activeCEFLaunchID == launchID else { return }
+                            self?.activeCEFLaunchID = nil
                             self?.gameRunning = false
                             self?.actionStatus = "Game closed."
                         }
                     } catch {
                         Task { @MainActor [weak self] in
+                            guard self?.activeCEFLaunchID == launchID else { return }
+                            self?.activeCEFLaunchID = nil
                             self?.gameRunning = false
                             self?.actionStatus = "Launch failed: \(error.localizedDescription)"
                         }
