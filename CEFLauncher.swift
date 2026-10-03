@@ -1,0 +1,313 @@
+import Foundation
+import CryptoKit
+import Darwin
+
+enum CEFLaunchError: LocalizedError {
+    case message(String)
+
+    var errorDescription: String? {
+        if case .message(let text) = self { return text }
+        return nil
+    }
+}
+
+struct CEFLaunchPlan {
+    let launcher: URL
+    let gameDirectory: URL
+    let prefix: URL
+    let preferences: URL
+    let wine: URL
+    let environment: [String: String]
+    let compatDLL: URL
+    let loader: URL
+    let watcher: URL
+
+    func windowsPath(_ url: URL) -> String {
+        let path = url.standardizedFileURL.resolvingSymlinksInPath().path
+        let drive = prefix.appendingPathComponent("drive_c").path + "/"
+        if path.hasPrefix(drive) {
+            return "C:\\" + path.dropFirst(drive.count).replacingOccurrences(of: "/", with: "\\")
+        }
+        return "Z:" + path.replacingOccurrences(of: "/", with: "\\")
+    }
+}
+
+enum CEFLauncher {
+    static let supportedClientHash = "953ea2ee442f81f79840b0cf6b9d4c3ba26c6d91e630e9980a4788a3d09868d1"
+    private static let expectedLauncherSuffix = "program files (x86)/steam/steamapps/common/kingdomcomedeliverance2/bin/win64mastermastersteampgo/kcdmp_launcher.exe"
+
+    static func connectionArguments(launcher: URL, address: String, name: String, password: String) -> [String] {
+        [launcher.path, "--connect", address, "--name", name]
+            + (password.isEmpty ? [] : ["--token", password]) + ["--wait"]
+    }
+
+    static func preflight(launcherPath: String, steamEnvironment: [String: String], resourceURL: URL) throws -> CEFLaunchPlan {
+        let launcher = URL(fileURLWithPath: launcherPath).standardizedFileURL.resolvingSymlinksInPath()
+        guard launcher.lastPathComponent == "KcdMp_launcher.exe",
+              let bottleRange = launcher.path.range(of: "/drive_c/"),
+              String(launcher.path[bottleRange.upperBound...]).lowercased() == expectedLauncherSuffix else {
+            throw CEFLaunchError.message("Select KcdMp_launcher.exe in the Steam installation of KCD2.")
+        }
+        let prefix = URL(fileURLWithPath: String(launcher.path[..<bottleRange.lowerBound]))
+        let gameDirectory = launcher.deletingLastPathComponent()
+        guard FileManager.default.fileExists(atPath: launcher.path),
+              FileManager.default.fileExists(atPath: gameDirectory.appendingPathComponent("KingdomCome.exe").path) else {
+            throw CEFLaunchError.message("The selected KCD:MP or KCD2 game executable is missing.")
+        }
+        let client = gameDirectory.appendingPathComponent("KcdMp_client.dll")
+        guard FileManager.default.fileExists(atPath: client.path) else {
+            throw CEFLaunchError.message("KcdMp_client.dll is missing next to the selected MP launcher.")
+        }
+        let digest = SHA256.hash(data: try Data(contentsOf: client))
+            .map { String(format: "%02x", $0) }.joined()
+        guard digest == supportedClientHash else {
+            throw CEFLaunchError.message("CEF compatibility supports only KCD:MP 0.37.0. The installed client was left unchanged.")
+        }
+
+        let databaseURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Wine Forge/database.json")
+        let database = try jsonObject(at: databaseURL)
+        guard let bottles = database["bottles"] as? [[String: Any]],
+              let bottle = bottles.first(where: { item in
+                  guard let path = item["path"] as? String else { return false }
+                  return URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path == prefix.path
+              }),
+              let bottleID = bottle["id"] as? String,
+              let settings = bottleSettings(database["bottleSettings"], id: bottleID),
+              let graphics = settings["graphics"] as? [String: Any],
+              graphics["backend"] as? String == "d3dMetal" else {
+            throw CEFLaunchError.message("The selected WineForge Steam bottle must use its configured D3DMetal backend.")
+        }
+
+        let selectedWine = steamEnvironment["WINE"] ?? ""
+        let wine = URL(fileURLWithPath: selectedWine).standardizedFileURL.resolvingSymlinksInPath()
+        guard wine.lastPathComponent == "wine", FileManager.default.isExecutableFile(atPath: wine.path) else {
+            throw CEFLaunchError.message("Start Windows Steam in the selected WineForge bottle before connecting.")
+        }
+        let engine = wine.deletingLastPathComponent().deletingLastPathComponent()
+        let metal = URL(fileURLWithPath: steamEnvironment["D3DMETAL_RUNTIME_DIR"] ??
+            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Wine Forge/Runtimes/D3DMetal").path)
+        guard FileManager.default.isExecutableFile(atPath: engine.appendingPathComponent("bin/wineserver").path),
+              FileManager.default.fileExists(atPath: metal.appendingPathComponent("external/D3DMetal.framework/D3DMetal").path) else {
+            throw CEFLaunchError.message("The WineForge runtime for this Steam bottle is missing.")
+        }
+
+        let resources = resourceURL.appendingPathComponent("cef-compat/client_compat")
+        let compatDLL = resources.appendingPathComponent("bin/KcdMpCefCompat.dll")
+        let loader = resources.appendingPathComponent("loader/bin/kcdmp_compat_loader.exe")
+        let watcher = resources.appendingPathComponent("loader/bin/kcdmp_compat_watcher.exe")
+        for (label, url) in [("CEF DLL", compatDLL), ("CEF loader", loader), ("CEF watcher", watcher)] {
+            guard FileManager.default.fileExists(atPath: url.path) else {
+                throw CEFLaunchError.message("The app is missing its \(label). Rebuild the app from the complete project.")
+            }
+        }
+        let preferences = try preferencesURL(prefix: prefix)
+        _ = try jsonObject(at: preferences)
+
+        var environment = ProcessInfo.processInfo.environment
+        environment.merge(steamEnvironment) { _, runningSteamValue in runningSteamValue }
+        let dllPath = [engine.appendingPathComponent("lib/dxmt"), engine.appendingPathComponent("lib/wine"),
+                       engine.appendingPathComponent("lib/wine/i386-windows"), engine.appendingPathComponent("lib/wine/x86_64-windows"),
+                       metal.appendingPathComponent("wine")].map(\.path).joined(separator: ":")
+        let libraryPath = [engine.appendingPathComponent("lib/dxmt/x86_64-unix"), engine.appendingPathComponent("lib"),
+                           engine.appendingPathComponent("lib/wine/x86_64-unix"), metal.appendingPathComponent("wine/x86_64-unix"),
+                           metal.appendingPathComponent("external"), engine.appendingPathComponent("lib/gstreamer-1.0")]
+            .map(\.path).joined(separator: ":")
+        let shared = metal.appendingPathComponent("external/libd3dshared.dylib").path
+        environment["WINEPREFIX"] = prefix.path
+        environment["WINEARCH"] = "win64"
+        environment["WINEDEBUG"] = "-all"
+        environment["WINE"] = wine.path
+        environment["WINESERVER"] = engine.appendingPathComponent("bin/wineserver").path
+        environment["GRAPHICS_BACKEND"] = "d3dmetal"
+        environment["ACTIVE_GRAPHICS_BACKEND"] = "d3dmetal"
+        environment["D3DMETAL_RUNTIME_DIR"] = metal.path
+        environment["D3DMETAL_FRAMEWORK_PATH"] = metal.appendingPathComponent("external/D3DMetal.framework/D3DMetal").path
+        environment["D3DMETAL_LIBD3DSHARED_PATH"] = shared
+        environment["CX_APPLEGPTK_LIBD3DSHARED_PATH"] = shared
+        environment["D3DMETAL_UNIXLIB_DIR"] = metal.appendingPathComponent("wine/x86_64-unix").path
+        environment["WFDXCOMPAT_RUNTIME_DIR"] = engine.appendingPathComponent("lib/wfdxcompat").path
+        environment["DXMT_RUNTIME_DIR"] = engine.appendingPathComponent("lib/dxmt").path
+        let overrides = settings["dllOverrides"] as? String ?? ""
+        environment["WINEDLLOVERRIDES"] = "dxgi,d3d10,d3d10core,d3d11,d3d12=n,b;mscoree,mshtml="
+            + (overrides.isEmpty ? "" : ";" + overrides)
+        environment["WINEDLLPATH"] = dllPath
+        environment["DYLD_LIBRARY_PATH"] = libraryPath
+        environment["DYLD_FALLBACK_LIBRARY_PATH"] = libraryPath
+        environment.removeValue(forKey: "WINELOADERNOEXEC")
+        return CEFLaunchPlan(launcher: launcher, gameDirectory: gameDirectory, prefix: prefix,
+                             preferences: preferences, wine: wine, environment: environment,
+                             compatDLL: compatDLL, loader: loader, watcher: watcher)
+    }
+
+    static func run(launcherPath: String, address: String, name: String, password: String,
+                    steamEnvironment: [String: String], resourceURL: URL,
+                    status: (String) -> Void) throws {
+        let plan = try preflight(launcherPath: launcherPath, steamEnvironment: steamEnvironment, resourceURL: resourceURL)
+        let fileManager = FileManager.default
+        let stage = URL(fileURLWithPath: "/private/tmp", isDirectory: true)
+            .appendingPathComponent("kcdmp-cef-session-" + UUID().uuidString)
+        try fileManager.createDirectory(at: stage, withIntermediateDirectories: false)
+        var watcher: Process?
+        defer {
+            if watcher?.isRunning != true { try? fileManager.removeItem(at: stage) }
+        }
+        let ready = stage.appendingPathComponent("watcher.ready")
+        let logDirectory = fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/KCDMP CEF")
+        try fileManager.createDirectory(at: logDirectory, withIntermediateDirectories: true,
+                                        attributes: [.posixPermissions: 0o700])
+        let logURL = logDirectory.appendingPathComponent("launch-" + UUID().uuidString + ".log")
+        let descriptor = open(logURL.path, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR)
+        guard descriptor >= 0 else { throw CEFLaunchError.message("Could not create the CEF launch log.") }
+        let logHandle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        defer { try? logHandle.close() }
+        let original = try jsonObject(at: plan.preferences)
+        var preferencesChanged = false
+        var failure: Error?
+
+        do {
+            let watch = Process()
+            watch.executableURL = plan.wine
+            watch.arguments = [plan.watcher.path,
+                               "--image", plan.windowsPath(plan.gameDirectory.appendingPathComponent("KingdomCome.exe")),
+                               "--dll", plan.windowsPath(plan.compatDLL),
+                               "--loader", plan.windowsPath(plan.loader),
+                               "--ready-file", plan.windowsPath(ready)]
+            watch.environment = plan.environment
+            watch.standardOutput = logHandle
+            watch.standardError = logHandle
+            try watch.run()
+            watcher = watch
+            let readyDeadline = Date().addingTimeInterval(15)
+            while !fileManager.fileExists(atPath: ready.path) {
+                if !watch.isRunning {
+                    throw CEFLaunchError.message("The CEF watcher refused startup. Close any existing game and see \(logURL.path)")
+                }
+                if Date() >= readyDeadline { throw CEFLaunchError.message("CEF watcher readiness timed out. See \(logURL.path)") }
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+
+            var enabled = original
+            enabled["server_ui"] = true
+            try writePreferences(enabled, to: plan.preferences)
+            preferencesChanged = true
+            status("Connecting with KCD:MP 0.37.0 CEF…")
+
+            let launcher = Process()
+            launcher.executableURL = plan.wine
+            launcher.arguments = connectionArguments(launcher: plan.launcher, address: address,
+                                                     name: name, password: password)
+            launcher.currentDirectoryURL = plan.gameDirectory
+            launcher.environment = plan.environment
+            launcher.standardOutput = logHandle
+            launcher.standardError = logHandle
+            try launcher.run()
+
+            let injectionDeadline = Date().addingTimeInterval(150)
+            while watch.isRunning {
+                if !launcher.isRunning {
+                    throw earlyLauncherFailure(logURL: logURL)
+                }
+                if Date() >= injectionDeadline { throw CEFLaunchError.message("CEF loading timed out. Log: \(logURL.path)") }
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+            if !launcher.isRunning { throw earlyLauncherFailure(logURL: logURL) }
+            guard watch.terminationStatus == 0 else {
+                throw CEFLaunchError.message("CEF loading was refused. Log: \(logURL.path)")
+            }
+            status("CEF loaded. Waiting for the game to close…")
+            launcher.waitUntilExit()
+            if launcher.terminationStatus != 0 {
+                throw CEFLaunchError.message("KCD:MP exited with code \(launcher.terminationStatus). Log: \(logURL.path)")
+            }
+        } catch {
+            failure = error
+        }
+
+        if preferencesChanged {
+            do {
+                var current = try jsonObject(at: plan.preferences)
+                if let previousValue = original["server_ui"] { current["server_ui"] = previousValue }
+                else { current.removeValue(forKey: "server_ui") }
+                try writePreferences(current, to: plan.preferences)
+            } catch {
+                if failure == nil { failure = CEFLaunchError.message("Could not restore KCD:MP preferences: \(error.localizedDescription)") }
+                else { status("Could not restore KCD:MP preferences. See \(logURL.path)") }
+            }
+        }
+        if let watcher, watcher.isRunning {
+            watcher.terminate()
+            let deadline = Date().addingTimeInterval(5)
+            while watcher.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
+        }
+        if let failure { throw failure }
+    }
+
+    private static func jsonObject(at url: URL) throws -> [String: Any] {
+        guard let object = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any] else {
+            throw CEFLaunchError.message("Invalid JSON in \(url.path)")
+        }
+        return object
+    }
+
+    private static func earlyLauncherFailure(logURL: URL) -> CEFLaunchError {
+        let log = (try? Data(contentsOf: logURL)).map { String(decoding: $0, as: UTF8.self) } ?? ""
+        if log.contains("no answer within") {
+            return .message("The server did not answer. Choose another server. Log: \(logURL.path)")
+        }
+        return .message("KCD:MP exited before CEF loaded. Log: \(logURL.path)")
+    }
+
+    private static func bottleSettings(_ raw: Any?, id: String) -> [String: Any]? {
+        if let dictionary = raw as? [String: Any] { return dictionary[id] as? [String: Any] }
+        if let entries = raw as? [Any] {
+            for index in stride(from: 0, to: entries.count - 1, by: 2) {
+                if entries[index] as? String == id { return entries[index + 1] as? [String: Any] }
+            }
+        }
+        return nil
+    }
+
+    private static func preferencesURL(prefix: URL) throws -> URL {
+        let users = prefix.appendingPathComponent("drive_c/users")
+        let preferred = users.appendingPathComponent(NSUserName() + "/AppData/Local/KcdMp/launcher.json")
+        let choices = (try FileManager.default.contentsOfDirectory(at: users, includingPropertiesForKeys: nil))
+            .map { $0.appendingPathComponent("AppData/Local/KcdMp/launcher.json") }
+            .filter { FileManager.default.fileExists(atPath: $0.path) }
+        let selected: URL
+        if FileManager.default.fileExists(atPath: preferred.path) { selected = preferred }
+        else if choices.count == 1 { selected = choices[0] }
+        else { throw CEFLaunchError.message("Could not identify KCD:MP preferences in this Steam bottle.") }
+        let values = try selected.resourceValues(forKeys: [.isSymbolicLinkKey])
+        guard values.isSymbolicLink != true else { throw CEFLaunchError.message("KCD:MP preferences cannot be a symbolic link.") }
+        return selected
+    }
+
+    private static func writePreferences(_ object: [String: Any], to url: URL) throws {
+        var data = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+        data.append(0x0A)
+        var pattern = Array(url.deletingLastPathComponent().appendingPathComponent(".cef-test-XXXXXX").path.utf8CString)
+        let descriptor = mkstemp(&pattern)
+        guard descriptor >= 0 else { throw CEFLaunchError.message("Could not create temporary KCD:MP preferences.") }
+        let temporary = String(cString: pattern)
+        var renamed = false
+        defer {
+            _ = close(descriptor)
+            if !renamed { _ = unlink(temporary) }
+        }
+        _ = fchmod(descriptor, S_IRUSR | S_IWUSR)
+        try data.withUnsafeBytes { buffer in
+            guard let base = buffer.baseAddress else { return }
+            var offset = 0
+            while offset < buffer.count {
+                let written = Darwin.write(descriptor, base.advanced(by: offset), buffer.count - offset)
+                guard written > 0 else { throw CEFLaunchError.message("Could not write KCD:MP preferences.") }
+                offset += written
+            }
+        }
+        guard rename(temporary, url.path) == 0 else {
+            throw CEFLaunchError.message("Could not replace KCD:MP preferences.")
+        }
+        renamed = true
+    }
+}

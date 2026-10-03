@@ -110,7 +110,12 @@ if [[ -f "$prefix/cxbottle.conf" ]]; then
     fi
     wine_exe="$crossover_app/Contents/SharedSupport/CrossOver/bin/wine"
   fi
-  wine_command=("$wine_exe" --bottle "${prefix:t}" --cx-app "$launcher" --)
+  launcher_relative="${launcher#"$prefix/drive_c/"}"
+  windows_launcher='C:'
+  for component in ${(s:/:)launcher_relative}; do
+    windows_launcher+="\\$component"
+  done
+  wine_command=("$wine_exe" --bottle "${prefix:t}" --cx-app "$windows_launcher" --)
 else
   wine_exe="${WINE:-}"
   wine_command=("$wine_exe" "$launcher")
@@ -138,8 +143,7 @@ case "${1:---browse}" in
     address="$2"
     player_name="$3"
     server_password="${4:-}"
-    print 'Checking for KCD:MP updates...'
-    run_launcher --update
+    # The CEF helper accepts one exact client build, so Connect must not update it.
     if [[ -n "$server_password" ]]; then
       run_launcher --connect "$address" --name "$player_name" --token "$server_password" --wait
     else

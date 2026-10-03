@@ -3,3 +3,7 @@ KCDMP Mac.app/
 .DS_Store
 *.xcuserstate
 xcuserdata/
+cef-source/client_compat/bin/
+cef-source/client_compat/loader/bin/
+__pycache__/
+*.pyc

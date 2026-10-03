@@ -45,11 +45,15 @@ func helperURL() throws -> URL {
 @MainActor final class LauncherModel: ObservableObject {
     @Published var servers: [MPServer] = []
     @Published var listStatus = "Loading servers…"
+    @Published var isRefreshing = false
     @Published var actionStatus = "Select a server and connect."
     @Published var gameRunning = false
     private var gameProcess: Process?
 
     func refreshServers() async {
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        defer { isRefreshing = false }
         listStatus = "Loading servers…"
         do {
             var request = URLRequest(url: URL(string: "https://kcd-mp.com/server-list/servers")!)
@@ -62,50 +66,87 @@ func helperURL() throws -> URL {
             servers = try JSONDecoder().decode([MPServer].self, from: data)
             listStatus = "\(servers.count) servers • refreshed just now"
         } catch {
-            listStatus = "Could not load servers: \(error.localizedDescription)"
+            listStatus = servers.isEmpty
+                ? "Could not load servers: \(error.localizedDescription)"
+                : "Could not refresh. Showing last known player counts: \(error.localizedDescription)"
         }
     }
 
     func join(address: String, name: String, password: String, launcherPath: String) {
         guard !gameRunning else { return }
         do {
-            let helper = try helperURL()
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-            process.arguments = [helper.path, "--launcher", launcherPath, "--launch", address, name]
-                + (password.isEmpty ? [] : [password])
-            var environment = ProcessInfo.processInfo.environment
-            environment.merge(try environmentForRunningSteam(launcherPath: launcherPath)) { _, steamValue in steamValue }
-            environment.removeValue(forKey: "WINELOADERNOEXEC")
-            process.environment = environment
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            process.standardError = pipe
-            try process.run()
-            gameProcess = process
-            gameRunning = true
-            actionStatus = "Updating KCD:MP and connecting…"
-            DispatchQueue.global(qos: .utility).async { [weak self] in
-                var tail = Data()
-                while true {
-                    let chunk = pipe.fileHandleForReading.availableData
-                    if chunk.isEmpty { break }
-                    tail.append(chunk)
-                    if tail.count > 16_384 { tail.removeFirst(tail.count - 16_384) }
-                }
-                process.waitUntilExit()
-                let lastLine = String(decoding: tail, as: UTF8.self)
-                    .split(whereSeparator: \.isNewline).last.map(String.init)
-                Task { @MainActor in
-                    self?.gameRunning = false
-                    self?.gameProcess = nil
-                    self?.actionStatus = process.terminationStatus == 0
-                        ? "Game closed."
-                        : (lastLine ?? "Launch failed with code \(process.terminationStatus).")
+            let steamEnvironment = try environmentForRunningSteam(launcherPath: launcherPath)
+            guard let bottleRange = launcherPath.range(of: "/drive_c/") else {
+                throw SteamProcessError.notRunning
+            }
+            let bottle = String(launcherPath[..<bottleRange.lowerBound])
+            if FileManager.default.fileExists(atPath: bottle + "/cxbottle.conf") {
+                try joinThroughCrossOver(address: address, name: name, password: password,
+                                         launcherPath: launcherPath, steamEnvironment: steamEnvironment)
+            } else {
+                guard let resources = Bundle.main.resourceURL else { throw LaunchError.missingHelper }
+                gameRunning = true
+                actionStatus = "Checking KCD:MP 0.37.0 compatibility…"
+                DispatchQueue.global(qos: .utility).async { [weak self] in
+                    do {
+                        try CEFLauncher.run(launcherPath: launcherPath, address: address, name: name,
+                                            password: password, steamEnvironment: steamEnvironment,
+                                            resourceURL: resources) { message in
+                            Task { @MainActor [weak self] in self?.actionStatus = message }
+                        }
+                        Task { @MainActor [weak self] in
+                            self?.gameRunning = false
+                            self?.actionStatus = "Game closed."
+                        }
+                    } catch {
+                        Task { @MainActor [weak self] in
+                            self?.gameRunning = false
+                            self?.actionStatus = "Launch failed: \(error.localizedDescription)"
+                        }
+                    }
                 }
             }
         } catch {
             actionStatus = "Launch failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func joinThroughCrossOver(address: String, name: String, password: String,
+                                      launcherPath: String, steamEnvironment: [String: String]) throws {
+        let helper = try helperURL()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = [helper.path, "--launcher", launcherPath, "--launch", address, name]
+            + (password.isEmpty ? [] : [password])
+        var environment = ProcessInfo.processInfo.environment
+        environment.merge(steamEnvironment) { _, steamValue in steamValue }
+        environment.removeValue(forKey: "WINELOADERNOEXEC")
+        process.environment = environment
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        try process.run()
+        gameProcess = process
+        gameRunning = true
+        actionStatus = "Connecting through CrossOver…"
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            var tail = Data()
+            while true {
+                let chunk = pipe.fileHandleForReading.availableData
+                if chunk.isEmpty { break }
+                tail.append(chunk)
+                if tail.count > 16_384 { tail.removeFirst(tail.count - 16_384) }
+            }
+            process.waitUntilExit()
+            let lastLine = String(decoding: tail, as: UTF8.self)
+                .split(whereSeparator: \.isNewline).last.map(String.init)
+            Task { @MainActor in
+                self?.gameRunning = false
+                self?.gameProcess = nil
+                self?.actionStatus = process.terminationStatus == 0
+                    ? "Game closed."
+                    : (lastLine ?? "Launch failed with code \(process.terminationStatus).")
+            }
         }
     }
 }
@@ -195,7 +236,12 @@ struct ContentView: View {
                 }
             }
 
-            Text(model.listStatus).font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Text(model.listStatus).font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button("Refresh") { Task { await model.refreshServers() } }
+                    .disabled(model.isRefreshing)
+            }
             List(selection: $selectedID) {
                 ForEach(model.servers) { server in
                     ServerRow(server: server,
