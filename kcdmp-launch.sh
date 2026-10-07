@@ -101,21 +101,17 @@ if [[ "$launcher" != /*/drive_c/* ]]; then
 fi
 prefix="${launcher%%/drive_c/*}"
 if [[ -f "$prefix/cxbottle.conf" ]]; then
-  if [[ -n "${CX_ROOT:-}" && -x "$CX_ROOT/bin/wine" ]]; then
-    wine_exe="$CX_ROOT/bin/wine"
-  else
-    crossover_app=/Applications/CrossOver.app
-    if [[ ! -d "$crossover_app" ]]; then
-      crossover_app="$HOME/Applications/CrossOver.app"
-    fi
-    wine_exe="$crossover_app/Contents/SharedSupport/CrossOver/bin/wine"
+  if [[ -z "${CX_ROOT:-}" || -z "${CX_BOTTLE:-}" || -z "${WINEPREFIX:-}" || "${WINEPREFIX:A}" != "${prefix:A}" ]]; then
+    print -u2 'Start Windows Steam in the selected CrossOver bottle before connecting.'
+    exit 1
   fi
+  wine_exe="$CX_ROOT/bin/wine"
   launcher_relative="${launcher#"$prefix/drive_c/"}"
   windows_launcher='C:'
   for component in ${(s:/:)launcher_relative}; do
     windows_launcher+="\\$component"
   done
-  wine_command=("$wine_exe" --bottle "${prefix:t}" --cx-app "$windows_launcher" --)
+  wine_command=("$wine_exe" --bottle "$CX_BOTTLE" --cx-app "$windows_launcher" --)
 else
   wine_exe="${WINE:-}"
   wine_command=("$wine_exe" "$launcher")
@@ -144,7 +140,7 @@ case "${1:---browse}" in
     address="$2"
     player_name="$3"
     server_password="${4:-}"
-    # The CEF helper accepts one exact client build, so Connect must not update it.
+    # The Mac app checks updates before this direct launch path.
     if [[ -n "$server_password" ]]; then
       run_launcher --connect "$address" --name "$player_name" --token "$server_password" --wait
     else

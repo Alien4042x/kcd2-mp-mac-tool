@@ -33,8 +33,8 @@ struct CEFLaunchPlan {
 }
 
 enum CEFLauncher {
-    static let supportedVersion = "0.38.0"
-    static let supportedClientHash = "20740fd5c119f7ba90a5137bbde62e5e43cd6b2d256e7996f945873842478a80"
+    static let supportedVersion = "0.39.1"
+    static let supportedClientHash = "1645ae3cd10d8852505e325208c0eeccbf4cbc19a8dc1b87db451f78b8d17c1d"
     private static let expectedLauncherSuffix = "program files (x86)/steam/steamapps/common/kingdomcomedeliverance2/bin/win64mastermastersteampgo/kcdmp_launcher.exe"
 
     private static func selectedClient(launcherPath: String) throws -> (launcher: URL, client: URL, prefix: URL) {
@@ -101,9 +101,9 @@ enum CEFLauncher {
         return output
     }
 
-    private static func ensureSupportedClient(launcherPath: String,
-                                              steamEnvironment: [String: String],
-                                              status: (String) -> Void) throws {
+    private static func prepareClient(launcherPath: String,
+                                      steamEnvironment: [String: String],
+                                      status: (String) -> Void) throws -> (version: String, cefSupported: Bool) {
         let selected = try selectedClient(launcherPath: launcherPath)
         status("Checking KCD:MP updates…")
         let check = try officialUpdate("--update-check", launcher: selected.launcher,
@@ -114,16 +114,48 @@ enum CEFLauncher {
               latest.range(of: #"^[0-9]+\.[0-9]+\.[0-9]+$"#, options: .regularExpression) != nil else {
             throw CEFLaunchError.message("Could not read the KCD:MP updater's version response.")
         }
-        guard String(latest) == supportedVersion else {
-            throw CEFLaunchError.message("KCD:MP \(latest) is available. This Mac build supports \(supportedVersion). A matching CEF helper is needed before connecting.")
-        }
-        if try clientHash(selected.client) != supportedClientHash {
-            status("Updating KCD:MP to \(supportedVersion)…")
+        let version = String(latest)
+        let installedHash = try clientHash(selected.client)
+        if version != supportedVersion || installedHash != supportedClientHash {
+            status("Updating KCD:MP to \(version)…")
             _ = try officialUpdate("--update", launcher: selected.launcher,
                                    steamEnvironment: steamEnvironment)
-            guard try clientHash(selected.client) == supportedClientHash else {
-                throw CEFLaunchError.message("KCD:MP updated, but its client does not match the verified \(supportedVersion) build.")
-            }
+        }
+        let updatedHash = try clientHash(selected.client)
+        return (version, version == supportedVersion && updatedHash == supportedClientHash)
+    }
+
+    private static func runWithoutCEF(launcherPath: String, address: String, name: String, password: String,
+                                      steamEnvironment: [String: String], resourceURL: URL,
+                                      version: String, status: (String) -> Void) throws {
+        let script = resourceURL.appendingPathComponent("kcdmp-launch.sh")
+        guard FileManager.default.fileExists(atPath: script.path) else {
+            throw CEFLaunchError.message("The app is missing its launch script.")
+        }
+        let logDirectory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/KCDMP CEF")
+        try FileManager.default.createDirectory(at: logDirectory, withIntermediateDirectories: true,
+                                                attributes: [.posixPermissions: 0o700])
+        let logURL = logDirectory.appendingPathComponent("launch-direct-" + UUID().uuidString + ".log")
+        let descriptor = open(logURL.path, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR)
+        guard descriptor >= 0 else { throw CEFLaunchError.message("Could not create the launch log.") }
+        let logHandle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        defer { try? logHandle.close() }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = [script.path, "--launcher", launcherPath, "--launch", address, name]
+            + (password.isEmpty ? [] : [password])
+        var environment = ProcessInfo.processInfo.environment
+        environment.merge(steamEnvironment) { _, runningSteamValue in runningSteamValue }
+        environment.removeValue(forKey: "WINELOADERNOEXEC")
+        process.environment = environment
+        process.standardOutput = logHandle
+        process.standardError = logHandle
+        status("No verified Mac CEF helper for KCD:MP \(version). Trying the official client directly…")
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw CEFLaunchError.message("KCD:MP \(version) exited with code \(process.terminationStatus). Log: \(logURL.path)")
         }
     }
 
@@ -192,11 +224,13 @@ enum CEFLauncher {
                            metal.appendingPathComponent("external"), engine.appendingPathComponent("lib/gstreamer-1.0")]
             .map(\.path).joined(separator: ":")
         let shared = metal.appendingPathComponent("external/libd3dshared.dylib").path
-        environment["WINEPREFIX"] = prefix.path
+        // Keep the exact prefix and server used by the Steam process. Changing either
+        // can open a separate Wine session even when the bottle directory matches.
+        environment["WINEPREFIX"] = steamEnvironment["WINEPREFIX"]
         environment["WINEARCH"] = "win64"
         environment["WINEDEBUG"] = "-all"
         environment["WINE"] = wine.path
-        environment["WINESERVER"] = engine.appendingPathComponent("bin/wineserver").path
+        environment["WINESERVER"] = steamEnvironment["WINESERVER"]
         environment["GRAPHICS_BACKEND"] = "d3dmetal"
         environment["ACTIVE_GRAPHICS_BACKEND"] = "d3dmetal"
         environment["D3DMETAL_RUNTIME_DIR"] = metal.path
@@ -221,7 +255,15 @@ enum CEFLauncher {
     static func run(launcherPath: String, address: String, name: String, password: String,
                     steamEnvironment: [String: String], resourceURL: URL,
                     status: (String) -> Void) throws {
-        try ensureSupportedClient(launcherPath: launcherPath, steamEnvironment: steamEnvironment, status: status)
+        status("Checking the running Steam Wine session…")
+        try verifyRunningWineServer(environment: steamEnvironment)
+        let prepared = try prepareClient(launcherPath: launcherPath, steamEnvironment: steamEnvironment, status: status)
+        if !prepared.cefSupported {
+            try runWithoutCEF(launcherPath: launcherPath, address: address, name: name, password: password,
+                              steamEnvironment: steamEnvironment, resourceURL: resourceURL,
+                              version: prepared.version, status: status)
+            return
+        }
         let plan = try preflight(launcherPath: launcherPath, steamEnvironment: steamEnvironment, resourceURL: resourceURL)
         let fileManager = FileManager.default
         let original = try jsonObject(at: plan.preferences)
@@ -351,7 +393,7 @@ enum CEFLauncher {
     private static func earlyLauncherFailure(logURL: URL) -> CEFLaunchError {
         let log = (try? Data(contentsOf: logURL)).map { String(decoding: $0, as: UTF8.self) } ?? ""
         if log.contains("protocol") && log.contains("not supported") {
-            return .message("The server requires a newer KCD:MP client and matching Mac CEF helper. Log: \(logURL.path)")
+            return .message("This server uses a different KCD:MP protocol. Check that the server is updated. Log: \(logURL.path)")
         }
         if log.contains("no answer within") {
             return .message("The server did not answer. Choose another server. Log: \(logURL.path)")

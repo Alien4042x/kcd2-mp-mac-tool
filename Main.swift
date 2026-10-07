@@ -82,6 +82,7 @@ func helperURL() throws -> URL {
             }
             let bottle = String(launcherPath[..<bottleRange.lowerBound])
             if FileManager.default.fileExists(atPath: bottle + "/cxbottle.conf") {
+                try verifyRunningWineServer(environment: steamEnvironment)
                 try joinThroughCrossOver(address: address, name: name, password: password,
                                          launcherPath: launcherPath, steamEnvironment: steamEnvironment)
             } else {

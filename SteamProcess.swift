@@ -4,13 +4,19 @@ import Darwin
 enum SteamProcessError: LocalizedError {
     case notRunning
     case missingEnvironment
+    case ambiguousSession
+    case serverNotRunning
 
     var errorDescription: String? {
         switch self {
         case .notRunning:
             return "Start Windows Steam in the same Wine bottle, then try Connect again."
-    case .missingEnvironment:
-            return "Could not read the running Windows Steam process. Restart it in your Wine bottle and try again."
+        case .missingEnvironment:
+            return "Could not verify the running Steam Wine prefix and runtime. Restart Windows Steam in the selected bottle and try again."
+        case .ambiguousSession:
+            return "Multiple Windows Steam sessions use this bottle with different Wine settings. Close the extra Steam session and try again."
+        case .serverNotRunning:
+            return "Windows Steam is visible, but its Wine server is not running in the selected bottle. Restart Steam in that bottle and try again."
         }
     }
 }
@@ -79,12 +85,39 @@ private func steamProcessIDs() throws -> [Int32] {
         .compactMap { Int32($0) }
 }
 
+func verifyRunningWineServer(environment: [String: String]) throws {
+    guard let serverPath = environment["WINESERVER"] else {
+        throw SteamProcessError.missingEnvironment
+    }
+    let probe = Process()
+    probe.executableURL = URL(fileURLWithPath: serverPath)
+    probe.arguments = ["-k0"] // Signal 0 checks this prefix without stopping its wineserver.
+    probe.environment = environment
+    probe.standardOutput = FileHandle.nullDevice
+    probe.standardError = FileHandle.nullDevice
+    do { try probe.run() } catch { throw SteamProcessError.serverNotRunning }
+    let deadline = Date().addingTimeInterval(3)
+    while probe.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
+    if probe.isRunning {
+        probe.terminate()
+        let grace = Date().addingTimeInterval(1)
+        while probe.isRunning && Date() < grace { Thread.sleep(forTimeInterval: 0.05) }
+        if probe.isRunning { _ = Darwin.kill(probe.processIdentifier, SIGKILL) }
+    }
+    probe.waitUntilExit()
+    guard probe.terminationStatus == 0 else { throw SteamProcessError.serverNotRunning }
+}
+
 func environmentForRunningSteam(launcherPath: String) throws -> [String: String] {
     guard let bottleRange = launcherPath.range(of: "/drive_c/") else {
         throw SteamProcessError.notRunning
     }
     let selectedBottle = URL(fileURLWithPath: String(launcherPath[..<bottleRange.lowerBound]))
         .standardizedFileURL.resolvingSymlinksInPath().path
+    let isCrossOver = FileManager.default.fileExists(atPath: selectedBottle + "/cxbottle.conf")
+    var foundSteam = false
+    var selectedEnvironment: [String: String]?
+    var selectedIdentity: [String]?
     for pid in try steamProcessIDs() {
         guard let snapshot = processSnapshot(pid: pid),
               let executable = snapshot.arguments.first,
@@ -93,17 +126,33 @@ func environmentForRunningSteam(launcherPath: String) throws -> [String: String]
               URL(fileURLWithPath: String(executable[..<steamBottleRange.lowerBound]))
                   .standardizedFileURL.resolvingSymlinksInPath().path == selectedBottle
         else { continue }
-        if let prefix = snapshot.environment["WINEPREFIX"],
-           URL(fileURLWithPath: prefix).standardizedFileURL.resolvingSymlinksInPath().path != selectedBottle {
-            throw SteamProcessError.missingEnvironment
+        foundSteam = true
+        guard let prefix = snapshot.environment["WINEPREFIX"], !prefix.isEmpty,
+              URL(fileURLWithPath: prefix).standardizedFileURL.resolvingSymlinksInPath().path == selectedBottle else { continue }
+        let server: String
+        let identity: [String]
+        if isCrossOver {
+            guard let bottleName = snapshot.environment["CX_BOTTLE"], !bottleName.isEmpty,
+                  let root = snapshot.environment["CX_ROOT"], root.hasPrefix("/"),
+                  FileManager.default.isExecutableFile(atPath: root + "/bin/wine"),
+                  let runningServer = snapshot.environment["WINESERVER"] else { continue }
+            server = runningServer
+            identity = [prefix, root, bottleName, server]
+        } else {
+            guard let wine = snapshot.environment["WINE"], wine.hasPrefix("/"),
+                  FileManager.default.isExecutableFile(atPath: wine) else { continue }
+            server = snapshot.environment["WINESERVER"] ??
+                URL(fileURLWithPath: wine).deletingLastPathComponent().appendingPathComponent("wineserver").path
+            identity = [prefix, wine, server]
         }
-        if !FileManager.default.fileExists(atPath: selectedBottle + "/cxbottle.conf") {
-            guard let wine = snapshot.environment["WINE"],
-                  FileManager.default.isExecutableFile(atPath: wine) else {
-                throw SteamProcessError.missingEnvironment
-            }
-        }
-        return snapshot.environment
+        guard server.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: server) else { continue }
+        var environment = snapshot.environment
+        environment["WINESERVER"] = server
+        if let selectedIdentity, selectedIdentity != identity { throw SteamProcessError.ambiguousSession }
+        selectedIdentity = identity
+        selectedEnvironment = environment
     }
+    if let selectedEnvironment { return selectedEnvironment }
+    if foundSteam { throw SteamProcessError.missingEnvironment }
     throw SteamProcessError.notRunning
 }
