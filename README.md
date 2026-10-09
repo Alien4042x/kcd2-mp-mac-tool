@@ -2,7 +2,7 @@
 
 A small native macOS launcher for [KCD:MP](https://kcd-mp.com/). It shows multiplayer servers and starts the official Windows KCD:MP client in the same bottle as a running Windows Steam client. You need your own Steam copy of Kingdom Come: Deliverance II. This repository does not include the game or the multiplayer client.
 
-**CEF support is experimental.** The bundled compatibility helper supports the exact KCD:MP 0.40.0 client in WineForge. Its target functions were compared with the reviewed 0.39.1 client, isolated compatibility checks passed, and two consecutive local-server starts rendered the web interface. Earlier sessions intermittently crashed during level loading inside Wine's `ntdll.dll`. Repeated 0.40.0 sessions on the same public server then crashed inside the game's `C_FogOfWar` path after conflicting map-fog updates. The same fault occurred without the CEF helper. A server-side workaround pauses fog persistence, but a fresh-process in-game check remains pending. CrossOver CEF behavior has not been tested. This build is for local testing, not a stable public release.
+**CEF support is experimental.** The bundled compatibility helper supports the exact KCD:MP 0.40.0 client in WineForge. Its target functions were compared with the reviewed 0.39.1 client, isolated compatibility checks passed, and two consecutive local-server starts rendered the web interface. CrossOver CEF behavior has not been tested. This build is for local testing, not a stable public release.
 
 ## Install
 
