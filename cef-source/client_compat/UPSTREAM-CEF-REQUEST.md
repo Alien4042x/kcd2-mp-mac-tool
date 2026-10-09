@@ -2,7 +2,7 @@
 
 ## Reproduction
 
-On KCD:MP 0.39.1 under WineForge with D3DMetal, join a server that supplies web interface components. The client selects `fallback level 1 (Wine / Proton, CPU frames)` and loads CEF 154.0.32. It then reports `the ready fence or the event query failed - the interface stays native`. The server's web bundle downloads successfully, but chat, scoreboard and other components use their native windows.
+On KCD:MP 0.40.0 under WineForge with D3DMetal, join a server that supplies web interface components. The client selects `fallback level 1 (Wine / Proton, CPU frames)` and loads CEF 154.0.32. Without the Mac helper, it then reports `the ready fence or the event query failed - the interface stays native`. The server's web bundle downloads successfully, but chat, scoreboard and other components use their native windows. The same behavior was observed on 0.39.1.
 
 The launcher already has an Interface drawing setting named Compatible. Its `web_gpu: cpu` value adds `-KcdMp_web_cpu 1`. The failing Wine run is already in the CPU-frame fallback level, so selecting Compatible does not appear to avoid the failing synchronization path. A live setting comparison is still needed to confirm this.
 
@@ -14,4 +14,4 @@ The goal is to let the official client update itself without a Mac launcher repl
 
 ## Current Mac workaround
 
-The Mac helper currently redirects ten private client functions in memory and validates the exact client DLL hash and PE signatures before doing so. A live 0.39.1 local-server test rendered the web panels, while the unmodified client had fallen back to native windows after the ready-fence failure. The helper works only for reviewed versions. A future release can change those functions or data layouts, so automatically applying old offsets to a new binary is unsafe. The client DLL, Wine and server web files remain unchanged.
+The Mac helper currently redirects ten private client functions in memory and validates the exact client DLL hash and PE signatures before doing so. Two consecutive 0.40.0 local-server starts rendered the web panels with the helper, while the unmodified client had fallen back to native windows after the ready-fence failure. The helper works only for reviewed versions. A future release can change those functions or data layouts, so automatically applying old offsets to a new binary is unsafe. The client DLL, Wine and server web files remain unchanged.

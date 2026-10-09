@@ -6,6 +6,9 @@ enum SteamProcessError: LocalizedError {
     case missingEnvironment
     case ambiguousSession
     case serverNotRunning
+    case gameAlreadyRunning
+    case debuggerStillRunning
+    case processInspectionFailed
 
     var errorDescription: String? {
         switch self {
@@ -17,6 +20,12 @@ enum SteamProcessError: LocalizedError {
             return "Multiple Windows Steam sessions use this bottle with different Wine settings. Close the extra Steam session and try again."
         case .serverNotRunning:
             return "Windows Steam is visible, but its Wine server is not running in the selected bottle. Restart Steam in that bottle and try again."
+        case .gameAlreadyRunning:
+            return "KCD2 is already running in this Steam bottle. Close the game or its Wine debugger before connecting again. Steam can stay open."
+        case .debuggerStillRunning:
+            return "A Wine debugger is still open in this Steam bottle. Close it before connecting again. Steam can stay open."
+        case .processInspectionFailed:
+            return "Could not check whether KCD2 is still running. Try Connect again after closing the game."
         }
     }
 }
@@ -70,19 +79,88 @@ private func processSnapshot(pid: Int32) -> SteamProcessSnapshot? {
     return SteamProcessSnapshot(arguments: arguments, environment: environment)
 }
 
-private func steamProcessIDs() throws -> [Int32] {
+private func processIDs(matching name: String) throws -> [Int32] {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
-    process.arguments = ["-f", "steam.exe"]
+    process.arguments = ["-f", name]
     let output = Pipe()
     process.standardOutput = output
     process.standardError = Pipe()
     try process.run()
     let data = output.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
+    guard process.terminationStatus == 0 || process.terminationStatus == 1 else {
+        throw SteamProcessError.processInspectionFailed
+    }
     return String(decoding: data, as: UTF8.self)
         .split(whereSeparator: \.isNewline)
         .compactMap { Int32($0) }
+}
+
+private func wineExecutablePath(_ argument: String, prefix: String) -> String? {
+    let path = argument.replacingOccurrences(of: "\\", with: "/")
+    if path.hasPrefix("/") { return path }
+    guard path.count >= 3, path[path.index(path.startIndex, offsetBy: 1)] == ":",
+          path[path.index(path.startIndex, offsetBy: 2)] == "/" else { return nil }
+    switch path.prefix(1).lowercased() {
+    case "c": return prefix + "/drive_c" + path.dropFirst(2)
+    case "z": return String(path.dropFirst(2))
+    default: return nil
+    }
+}
+
+func gameProcessIDs(launcherPath: String) throws -> Set<Int32> {
+    guard let bottleRange = launcherPath.range(of: "/drive_c/") else {
+        throw SteamProcessError.notRunning
+    }
+    let bottle = URL(fileURLWithPath: String(launcherPath[..<bottleRange.lowerBound]))
+        .standardizedFileURL.resolvingSymlinksInPath().path
+    let expected = URL(fileURLWithPath: launcherPath).deletingLastPathComponent()
+        .appendingPathComponent("KingdomCome.exe").standardizedFileURL.resolvingSymlinksInPath().path
+    var found = Set<Int32>()
+    for pid in try processIDs(matching: "KingdomCome.exe") {
+        guard let snapshot = processSnapshot(pid: pid), let executable = snapshot.arguments.first,
+              let prefix = snapshot.environment["WINEPREFIX"],
+              URL(fileURLWithPath: prefix).standardizedFileURL.resolvingSymlinksInPath().path == bottle,
+              let processPath = wineExecutablePath(executable, prefix: bottle),
+              URL(fileURLWithPath: processPath).standardizedFileURL.resolvingSymlinksInPath().path
+                  .caseInsensitiveCompare(expected) == .orderedSame
+        else { continue }
+        found.insert(pid)
+    }
+    return found
+}
+
+func debuggerProcessIDs(launcherPath: String) throws -> Set<Int32> {
+    guard let bottleRange = launcherPath.range(of: "/drive_c/") else {
+        throw SteamProcessError.notRunning
+    }
+    let bottle = URL(fileURLWithPath: String(launcherPath[..<bottleRange.lowerBound]))
+        .standardizedFileURL.resolvingSymlinksInPath().path
+    var found = Set<Int32>()
+    for pid in try processIDs(matching: "winedbg.exe") {
+        guard let snapshot = processSnapshot(pid: pid), let executable = snapshot.arguments.first,
+              executable.replacingOccurrences(of: "\\", with: "/")
+                  .split(separator: "/").last?.lowercased() == "winedbg.exe",
+              let prefix = snapshot.environment["WINEPREFIX"],
+              URL(fileURLWithPath: prefix).standardizedFileURL.resolvingSymlinksInPath().path == bottle
+        else { continue }
+        found.insert(pid)
+    }
+    return found
+}
+
+func sessionProcessIDs(launcherPath: String) throws -> Set<Int32> {
+    try gameProcessIDs(launcherPath: launcherPath).union(debuggerProcessIDs(launcherPath: launcherPath))
+}
+
+func verifyGameNotRunning(launcherPath: String) throws {
+    if !(try gameProcessIDs(launcherPath: launcherPath)).isEmpty {
+        throw SteamProcessError.gameAlreadyRunning
+    }
+    if !(try debuggerProcessIDs(launcherPath: launcherPath)).isEmpty {
+        throw SteamProcessError.debuggerStillRunning
+    }
 }
 
 func verifyRunningWineServer(environment: [String: String]) throws {
@@ -118,7 +196,7 @@ func environmentForRunningSteam(launcherPath: String) throws -> [String: String]
     var foundSteam = false
     var selectedEnvironment: [String: String]?
     var selectedIdentity: [String]?
-    for pid in try steamProcessIDs() {
+    for pid in try processIDs(matching: "steam.exe") {
         guard let snapshot = processSnapshot(pid: pid),
               let executable = snapshot.arguments.first,
               URL(fileURLWithPath: executable).lastPathComponent.lowercased() == "steam.exe",

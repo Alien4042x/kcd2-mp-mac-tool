@@ -1,6 +1,7 @@
 import SwiftUI
 import Foundation
 import AppKit
+import Darwin
 
 struct MPServer: Decodable, Identifiable {
     let address: String
@@ -73,7 +74,8 @@ func helperURL() throws -> URL {
         }
     }
 
-    func join(address: String, name: String, password: String, launcherPath: String) {
+    func join(address: String, name: String, password: String, launcherPath: String,
+              serverVersion: String?) {
         guard !gameRunning else { return }
         do {
             let steamEnvironment = try environmentForRunningSteam(launcherPath: launcherPath)
@@ -83,6 +85,7 @@ func helperURL() throws -> URL {
             let bottle = String(launcherPath[..<bottleRange.lowerBound])
             if FileManager.default.fileExists(atPath: bottle + "/cxbottle.conf") {
                 try verifyRunningWineServer(environment: steamEnvironment)
+                try verifyGameNotRunning(launcherPath: launcherPath)
                 try joinThroughCrossOver(address: address, name: name, password: password,
                                          launcherPath: launcherPath, steamEnvironment: steamEnvironment)
             } else {
@@ -94,7 +97,8 @@ func helperURL() throws -> URL {
                 DispatchQueue.global(qos: .utility).async { [weak self] in
                     do {
                         try CEFLauncher.run(launcherPath: launcherPath, address: address, name: name,
-                                            password: password, steamEnvironment: steamEnvironment,
+                                            password: password, serverVersion: serverVersion,
+                                            steamEnvironment: steamEnvironment,
                                             resourceURL: resources) { message in
                             Task { @MainActor [weak self] in
                                 guard self?.activeCEFLaunchID == launchID else { return }
@@ -133,30 +137,35 @@ func helperURL() throws -> URL {
         environment.merge(steamEnvironment) { _, steamValue in steamValue }
         environment.removeValue(forKey: "WINELOADERNOEXEC")
         process.environment = environment
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
+        let logDirectory = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Logs/KCDMP CEF")
+        try FileManager.default.createDirectory(at: logDirectory, withIntermediateDirectories: true,
+                                                attributes: [.posixPermissions: 0o700])
+        let logURL = logDirectory.appendingPathComponent("launch-crossover-" + UUID().uuidString + ".log")
+        let descriptor = Darwin.open(logURL.path, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR)
+        guard descriptor >= 0 else { throw CEFLaunchError.message("Could not create the launch log.") }
+        let logHandle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        process.standardOutput = logHandle
+        process.standardError = logHandle
         try process.run()
         gameProcess = process
         gameRunning = true
         actionStatus = "Connecting through CrossOver…"
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            var tail = Data()
-            while true {
-                let chunk = pipe.fileHandleForReading.availableData
-                if chunk.isEmpty { break }
-                tail.append(chunk)
-                if tail.count > 16_384 { tail.removeFirst(tail.count - 16_384) }
+            defer { try? logHandle.close() }
+            let result: String
+            do {
+                try CEFLauncher.supervise(process, launcherPath: launcherPath, logURL: logURL) { message in
+                    Task { @MainActor [weak self] in self?.actionStatus = message }
+                }
+                result = "Game closed."
+            } catch {
+                result = "Launch failed: \(error.localizedDescription)"
             }
-            process.waitUntilExit()
-            let lastLine = String(decoding: tail, as: UTF8.self)
-                .split(whereSeparator: \.isNewline).last.map(String.init)
             Task { @MainActor in
                 self?.gameRunning = false
                 self?.gameProcess = nil
-                self?.actionStatus = process.terminationStatus == 0
-                    ? "Game closed."
-                    : (lastLine ?? "Launch failed with code \(process.terminationStatus).")
+                self?.actionStatus = result
             }
         }
     }
@@ -325,7 +334,10 @@ struct ContentView: View {
             return
         }
         let token = needsServerPassword ? serverPassword : ""
-        model.join(address: address, name: name, password: token, launcherPath: expandedLauncherPath)
+        let version = directAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? selectedServer?.version : nil
+        model.join(address: address, name: name, password: token, launcherPath: expandedLauncherPath,
+                   serverVersion: version)
         serverPassword = ""
     }
 }

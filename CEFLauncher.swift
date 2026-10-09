@@ -33,8 +33,8 @@ struct CEFLaunchPlan {
 }
 
 enum CEFLauncher {
-    static let supportedVersion = "0.39.1"
-    static let supportedClientHash = "1645ae3cd10d8852505e325208c0eeccbf4cbc19a8dc1b87db451f78b8d17c1d"
+    static let supportedVersion = "0.40.0"
+    static let supportedClientHash = "a6ac0a5309abdf21aba9522f11252690c5092c0d5cc34b3229524c8d99a4f82b"
     private static let expectedLauncherSuffix = "program files (x86)/steam/steamapps/common/kingdomcomedeliverance2/bin/win64mastermastersteampgo/kcdmp_launcher.exe"
 
     private static func selectedClient(launcherPath: String) throws -> (launcher: URL, client: URL, prefix: URL) {
@@ -103,6 +103,7 @@ enum CEFLauncher {
 
     private static func prepareClient(launcherPath: String,
                                       steamEnvironment: [String: String],
+                                      serverVersion: String?,
                                       status: (String) -> Void) throws -> (version: String, cefSupported: Bool) {
         let selected = try selectedClient(launcherPath: launcherPath)
         status("Checking KCD:MP updates…")
@@ -116,6 +117,13 @@ enum CEFLauncher {
         }
         let version = String(latest)
         let installedHash = try clientHash(selected.client)
+        if let serverVersion,
+           serverVersion.range(of: #"^[0-9]+\.[0-9]+\.[0-9]+$"#, options: .regularExpression) != nil,
+           serverVersion.split(separator: ".").prefix(2) != version.split(separator: ".").prefix(2) {
+            status("Server uses KCD:MP \(serverVersion). Keeping the installed client for this connection…")
+            return (serverVersion, installedHash == supportedClientHash &&
+                    serverVersion.split(separator: ".").prefix(2) == supportedVersion.split(separator: ".").prefix(2))
+        }
         if version != supportedVersion || installedHash != supportedClientHash {
             status("Updating KCD:MP to \(version)…")
             _ = try officialUpdate("--update", launcher: selected.launcher,
@@ -123,6 +131,102 @@ enum CEFLauncher {
         }
         let updatedHash = try clientHash(selected.client)
         return (version, version == supportedVersion && updatedHash == supportedClientHash)
+    }
+
+    private static func launchLog(_ url: URL) -> String {
+        (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+    }
+
+    private static func crashedGame(_ log: String) -> Bool {
+        log.contains("the client crashed:") || log.contains("crash: dump written")
+    }
+
+    private static func clientReportedCrash(launcherPath: String, since start: Date) -> Bool {
+        guard let bottleRange = launcherPath.range(of: "/drive_c/") else { return false }
+        let users = URL(fileURLWithPath: String(launcherPath[..<bottleRange.lowerBound]))
+            .appendingPathComponent("drive_c/users")
+        guard let entries = try? FileManager.default.contentsOfDirectory(at: users,
+                                                                          includingPropertiesForKeys: nil) else {
+            return false
+        }
+        for user in entries {
+            let logURL = user.appendingPathComponent("AppData/Local/KcdMp/client.log")
+            guard let values = try? logURL.resourceValues(forKeys: [.contentModificationDateKey]),
+                  let modified = values.contentModificationDate,
+                  modified >= start.addingTimeInterval(-2),
+                  let log = try? String(contentsOf: logURL, encoding: .utf8) else { continue }
+            if log.contains("crash report written:") && log.contains("EXCEPTION access violation") {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func crashedDuringLaunch(_ log: String, launcherPath: String,
+                                            since start: Date) -> Bool {
+        crashedGame(log) ||
+            (log.contains("wine: Unhandled page fault on execute access") &&
+             clientReportedCrash(launcherPath: launcherPath, since: start))
+    }
+
+    private static func ownedSessionProcesses(_ observed: Set<Int32>, launcherPath: String) -> Set<Int32> {
+        ((try? sessionProcessIDs(launcherPath: launcherPath)) ?? []).intersection(observed)
+    }
+
+    private static func closeCrashedGame(_ observed: Set<Int32>, launcherPath: String,
+                                         status: (String) -> Void) {
+        let remaining = ownedSessionProcesses(observed, launcherPath: launcherPath)
+        guard !remaining.isEmpty else { return }
+        status("The game crashed. Closing its remaining game and debugger processes…")
+        for pid in remaining { _ = Darwin.kill(pid, SIGTERM) }
+        let deadline = Date().addingTimeInterval(3)
+        while !ownedSessionProcesses(observed, launcherPath: launcherPath).isEmpty && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        for pid in ownedSessionProcesses(observed, launcherPath: launcherPath) {
+            _ = Darwin.kill(pid, SIGKILL)
+        }
+    }
+
+    static func supervise(_ process: Process, launcherPath: String, logURL: URL,
+                          status: (String) -> Void) throws {
+        var observed = Set<Int32>()
+        let start = Date()
+        while process.isRunning {
+            if let current = try? sessionProcessIDs(launcherPath: launcherPath) {
+                observed.formUnion(current)
+            }
+            if crashedDuringLaunch(launchLog(logURL), launcherPath: launcherPath, since: start) {
+                closeCrashedGame(observed, launcherPath: launcherPath, status: status)
+                let deadline = Date().addingTimeInterval(5)
+                while process.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.1) }
+                if process.isRunning { process.terminate() }
+                let terminationDeadline = Date().addingTimeInterval(3)
+                while process.isRunning && Date() < terminationDeadline {
+                    Thread.sleep(forTimeInterval: 0.1)
+                }
+                if process.isRunning { _ = Darwin.kill(process.processIdentifier, SIGKILL) }
+                process.waitUntilExit()
+                throw CEFLaunchError.message("The KCD:MP client crashed. See \(logURL.path)")
+            }
+            Thread.sleep(forTimeInterval: 1)
+        }
+        process.waitUntilExit()
+        let log = launchLog(logURL)
+        if crashedDuringLaunch(log, launcherPath: launcherPath, since: start) {
+            closeCrashedGame(observed, launcherPath: launcherPath, status: status)
+            throw CEFLaunchError.message("The KCD:MP client crashed. See \(logURL.path)")
+        }
+        if let current = try? gameProcessIDs(launcherPath: launcherPath), !current.isEmpty {
+            let tracked = observed.union(current)
+            status("The launcher closed. Waiting for the game process to exit…")
+            while !((try? gameProcessIDs(launcherPath: launcherPath)) ?? []).intersection(tracked).isEmpty {
+                Thread.sleep(forTimeInterval: 1)
+            }
+        }
+        guard process.terminationStatus == 0 else {
+            throw CEFLaunchError.message("KCD:MP exited with code \(process.terminationStatus). Log: \(logURL.path)")
+        }
     }
 
     private static func runWithoutCEF(launcherPath: String, address: String, name: String, password: String,
@@ -153,10 +257,7 @@ enum CEFLauncher {
         process.standardError = logHandle
         status("No verified Mac CEF helper for KCD:MP \(version). Trying the official client directly…")
         try process.run()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            throw CEFLaunchError.message("KCD:MP \(version) exited with code \(process.terminationStatus). Log: \(logURL.path)")
-        }
+        try supervise(process, launcherPath: launcherPath, logURL: logURL, status: status)
     }
 
     static func connectionArguments(launcher: URL, address: String, name: String, password: String) -> [String] {
@@ -253,11 +354,13 @@ enum CEFLauncher {
     }
 
     static func run(launcherPath: String, address: String, name: String, password: String,
-                    steamEnvironment: [String: String], resourceURL: URL,
+                    serverVersion: String?, steamEnvironment: [String: String], resourceURL: URL,
                     status: (String) -> Void) throws {
         status("Checking the running Steam Wine session…")
         try verifyRunningWineServer(environment: steamEnvironment)
-        let prepared = try prepareClient(launcherPath: launcherPath, steamEnvironment: steamEnvironment, status: status)
+        try verifyGameNotRunning(launcherPath: launcherPath)
+        let prepared = try prepareClient(launcherPath: launcherPath, steamEnvironment: steamEnvironment,
+                                         serverVersion: serverVersion, status: status)
         if !prepared.cefSupported {
             try runWithoutCEF(launcherPath: launcherPath, address: address, name: name, password: password,
                               steamEnvironment: steamEnvironment, resourceURL: resourceURL,
@@ -340,14 +443,7 @@ enum CEFLauncher {
                 throw CEFLaunchError.message("CEF loading was refused. Log: \(logURL.path)")
             }
             status("CEF loaded. Waiting for the game to close…")
-            gameLaunch.waitUntilExit()
-            if gameLaunch.terminationStatus != 0 {
-                let log = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
-                if log.contains("Unhandled page fault") || log.contains("crash: dump written") {
-                    throw CEFLaunchError.message("The game crashed after CEF loaded. Close the Wine debugger, then try Connect again. Steam can stay open. Log: \(logURL.path)")
-                }
-                throw CEFLaunchError.message("KCD:MP exited with code \(gameLaunch.terminationStatus). Log: \(logURL.path)")
-            }
+            try supervise(gameLaunch, launcherPath: launcherPath, logURL: logURL, status: status)
         } catch {
             failure = error
         }
@@ -392,6 +488,9 @@ enum CEFLauncher {
 
     private static func earlyLauncherFailure(logURL: URL) -> CEFLaunchError {
         let log = (try? Data(contentsOf: logURL)).map { String(decoding: $0, as: UTF8.self) } ?? ""
+        if crashedGame(log) {
+            return .message("The KCD:MP client crashed before CEF loaded. Log: \(logURL.path)")
+        }
         if log.contains("protocol") && log.contains("not supported") {
             return .message("This server uses a different KCD:MP protocol. Check that the server is updated. Log: \(logURL.path)")
         }
