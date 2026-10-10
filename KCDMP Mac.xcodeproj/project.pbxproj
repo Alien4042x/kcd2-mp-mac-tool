@@ -12,6 +12,7 @@
 		A10000000000000000000017 /* SteamProcess.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000018 /* SteamProcess.swift */; };
 		A10000000000000000000019 /* CEFLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000020 /* CEFLauncher.swift */; };
 		A10000000000000000000021 /* cef-compat in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000022 /* cef-compat */; };
+		A10000000000000000000023 /* CEFClientTarget.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000024 /* CEFClientTarget.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -22,6 +23,7 @@
 		A10000000000000000000018 /* SteamProcess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SteamProcess.swift; sourceTree = "<group>"; };
 		A10000000000000000000020 /* CEFLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CEFLauncher.swift; sourceTree = "<group>"; };
 		A10000000000000000000022 /* cef-compat */ = {isa = PBXFileReference; lastKnownFileType = folder; path = "cef-compat"; sourceTree = "<group>"; };
+		A10000000000000000000024 /* CEFClientTarget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CEFClientTarget.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -29,12 +31,12 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		A10000000000000000000009 = {isa = PBXGroup; children = (A10000000000000000000004 /* Main.swift */, A10000000000000000000018 /* SteamProcess.swift */, A10000000000000000000020 /* CEFLauncher.swift */, A10000000000000000000005 /* Assets.xcassets */, A10000000000000000000006 /* kcdmp-launch.sh */, A10000000000000000000022 /* cef-compat */, A1000000000000000000000A /* Products */); sourceTree = "<group>"; };
+		A10000000000000000000009 = {isa = PBXGroup; children = (A10000000000000000000004 /* Main.swift */, A10000000000000000000018 /* SteamProcess.swift */, A10000000000000000000020 /* CEFLauncher.swift */, A10000000000000000000024 /* CEFClientTarget.swift */, A10000000000000000000005 /* Assets.xcassets */, A10000000000000000000006 /* kcdmp-launch.sh */, A10000000000000000000022 /* cef-compat */, A1000000000000000000000A /* Products */); sourceTree = "<group>"; };
 		A1000000000000000000000A /* Products */ = {isa = PBXGroup; children = (A10000000000000000000007 /* KCDMP Mac.app */); name = Products; sourceTree = "<group>"; };
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		A1000000000000000000000B /* KCDMP Mac */ = {isa = PBXNativeTarget; buildConfigurationList = A10000000000000000000015 /* Build configuration list for PBXNativeTarget "KCDMP Mac" */; buildPhases = (A1000000000000000000000C /* Sources */, A10000000000000000000008 /* Frameworks */, A1000000000000000000000D /* Resources */, A1000000000000000000000E /* Make launcher executable */); buildRules = (); dependencies = (); name = "KCDMP Mac"; productName = "KCDMP Mac"; productReference = A10000000000000000000007 /* KCDMP Mac.app */; productType = "com.apple.product-type.application"; };
+		A1000000000000000000000B /* KCDMP Mac */ = {isa = PBXNativeTarget; buildConfigurationList = A10000000000000000000015 /* Build configuration list for PBXNativeTarget "KCDMP Mac" */; buildPhases = (A10000000000000000000025 /* Generate CEF client target */, A1000000000000000000000C /* Sources */, A10000000000000000000008 /* Frameworks */, A1000000000000000000000D /* Resources */, A1000000000000000000000E /* Make launcher executable */); buildRules = (); dependencies = (); name = "KCDMP Mac"; productName = "KCDMP Mac"; productReference = A10000000000000000000007 /* KCDMP Mac.app */; productType = "com.apple.product-type.application"; };
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -47,10 +49,11 @@
 
 /* Begin PBXShellScriptBuildPhase section */
 		A1000000000000000000000E /* Make launcher executable */ = {isa = PBXShellScriptBuildPhase; alwaysOutOfDate = 1; buildActionMask = 2147483647; files = (); inputPaths = (); name = "Make launcher executable"; outputPaths = (); runOnlyForDeploymentPostprocessing = 0; shellPath = /bin/sh; shellScript = "chmod +x \"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/kcdmp-launch.sh\"\n"; };
+		A10000000000000000000025 /* Generate CEF client target */ = {isa = PBXShellScriptBuildPhase; alwaysOutOfDate = 1; buildActionMask = 2147483647; files = (); inputPaths = (); name = "Generate CEF client target"; outputPaths = (); runOnlyForDeploymentPostprocessing = 0; shellPath = /bin/sh; shellScript = "python3 \"${SRCROOT}/cef-source/client_compat/bridge/verify_launcher_target.py\" --write\n"; };
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		A1000000000000000000000C /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000001 /* Main.swift in Sources */, A10000000000000000000017 /* SteamProcess.swift in Sources */, A10000000000000000000019 /* CEFLauncher.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
+		A1000000000000000000000C /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000001 /* Main.swift in Sources */, A10000000000000000000017 /* SteamProcess.swift in Sources */, A10000000000000000000019 /* CEFLauncher.swift in Sources */, A10000000000000000000023 /* CEFClientTarget.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */

@@ -109,6 +109,33 @@ private func wineExecutablePath(_ argument: String, prefix: String) -> String? {
     }
 }
 
+private func steamGameLanguage(prefix: String) -> [String: String] {
+    let manifest = URL(fileURLWithPath: prefix)
+        .appendingPathComponent("drive_c/Program Files (x86)/Steam/steamapps/appmanifest_1771300.acf")
+    guard let contents = try? String(contentsOf: manifest, encoding: .utf8) else { return [:] }
+    let language = contents.split(whereSeparator: \.isNewline).lazy.compactMap { line -> String? in
+        let fields = line.trimmingCharacters(in: .whitespaces).split(separator: "\"", omittingEmptySubsequences: false)
+        guard fields.count >= 4, fields[1] == "language" else { return nil }
+        return String(fields[3])
+    }.first
+    guard let language,
+          language.range(of: #"^[A-Za-z_-]+$"#, options: .regularExpression) != nil else { return [:] }
+    let locales = [
+        "czech": "cs_CZ.UTF-8", "english": "en_US.UTF-8", "german": "de_DE.UTF-8",
+        "french": "fr_FR.UTF-8", "italian": "it_IT.UTF-8", "spanish": "es_ES.UTF-8",
+        "polish": "pl_PL.UTF-8", "russian": "ru_RU.UTF-8", "japanese": "ja_JP.UTF-8",
+        "korean": "ko_KR.UTF-8", "portuguese": "pt_PT.UTF-8", "brazilian": "pt_BR.UTF-8",
+        "turkish": "tr_TR.UTF-8", "ukrainian": "uk_UA.UTF-8", "schinese": "zh_CN.UTF-8",
+        "tchinese": "zh_TW.UTF-8"
+    ]
+    var result = ["SteamAppLanguage": language]
+    if let locale = locales[language] {
+        result["LANG"] = locale
+        result["LC_ALL"] = locale
+    }
+    return result
+}
+
 func gameProcessIDs(launcherPath: String) throws -> Set<Int32> {
     guard let bottleRange = launcherPath.range(of: "/drive_c/") else {
         throw SteamProcessError.notRunning
@@ -226,6 +253,7 @@ func environmentForRunningSteam(launcherPath: String) throws -> [String: String]
         guard server.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: server) else { continue }
         var environment = snapshot.environment
         environment["WINESERVER"] = server
+        environment.merge(steamGameLanguage(prefix: selectedBottle)) { _, gameValue in gameValue }
         if let selectedIdentity, selectedIdentity != identity { throw SteamProcessError.ambiguousSession }
         selectedIdentity = identity
         selectedEnvironment = environment

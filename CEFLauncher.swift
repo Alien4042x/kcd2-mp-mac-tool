@@ -33,8 +33,8 @@ struct CEFLaunchPlan {
 }
 
 enum CEFLauncher {
-    static let supportedVersion = "0.40.0"
-    static let supportedClientHash = "a6ac0a5309abdf21aba9522f11252690c5092c0d5cc34b3229524c8d99a4f82b"
+    static let supportedVersion = CEFClientTarget.version
+    static let supportedClientHash = CEFClientTarget.sha256
     private static let expectedLauncherSuffix = "program files (x86)/steam/steamapps/common/kingdomcomedeliverance2/bin/win64mastermastersteampgo/kcdmp_launcher.exe"
 
     private static func selectedClient(launcherPath: String) throws -> (launcher: URL, client: URL, prefix: URL) {

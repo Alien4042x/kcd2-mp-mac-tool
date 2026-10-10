@@ -1,13 +1,27 @@
 # Automatic Mac builds
 
-GitHub Actions builds the Xcode project on every push to `main`, on pull requests, and when started manually. It also checks the [official KCD:MP releases](https://github.com/dintech-rappy/kcd-mp-releases/releases) every six hours. The first check after a new release builds the current Mac launcher and saves an unsigned ZIP and its SHA-256 file as a draft release. Later checks skip that version. A failed build is retried on the next check because no draft was saved.
+The **Build Mac launcher** workflow builds the committed Xcode project on pushes, pull requests and manual runs. These are unsigned development artifacts.
 
-The draft tag has the form `ci-v0.41.0`. It stays unpublished until the app has been tested, signed with an Apple Developer ID, and notarized. Ordinary build runs also offer an unsigned artifact on their Actions page. No Apple signing certificate is stored in this repository or used by this workflow.
+The **Prepare Mac CEF candidate** workflow checks the [official KCD:MP releases](https://github.com/dintech-rappy/kcd-mp-releases/releases) every six hours. When a new client appears, it downloads the previous reviewed client and the new client directly from the publisher, checks both release archive hashes, and compares the exact functions used by the Mac CEF helper. If their instructions, branch relationships, referenced read-only data, function sizes or required writable bindings change, the workflow stops. It never uses a changed client with an older helper.
 
-The workflow does not port the CEF helper to a new KCD:MP DLL. For example, a build triggered by 0.41.0 still contains the reviewed 0.40.0 helper and uses the official client directly for 0.41.0. The app checks and downloads the official multiplayer client when you click Connect. GitHub builds only the Mac app.
+When those checks pass, the workflow builds a new exact-version helper and Mac app in its temporary checkout. It saves the app and the target manifest in an unpublished draft release tagged `cef-ci-vX.Y.Z`. No commit or manual Git push is needed for a new candidate. The candidate remains unpublished until someone verifies the web panels and game stability in a live Mac session. A GitHub build cannot run KCD2 or prove that CEF renders in the game.
 
-To download a test build, sign in to GitHub, open the repository's **Actions** tab, choose a successful **Build Mac launcher** run, and download its artifact at the bottom of the run page. Extract the artifact ZIP, then extract the `KCDMP-Mac-test-build.zip` inside it. This is an unsigned test app. The draft under **Releases** is not a public download for ordinary users. They need a reviewed, signed and notarized release to get a normal download link.
+The Xcode project generates `CEFClientTarget.swift` from the selected verified client manifest before compiling. The app's version and SHA-256 are never typed into the launcher by hand. The build checks that the manifest, CEF helper header and generated Swift file agree.
 
-The Mac app checks for KCD:MP client updates when you press Connect. Its bundled CEF helper is gated to an exact reviewed client DLL. A new client version uses the official direct launch path until its CEF behavior is reviewed. A successful GitHub build does not prove that the new client renders CEF panels or that the game is stable under Wine.
+## One-time signing setup
 
-To get a Developer ID release, sign and notarize the tested app with your own Apple credentials before publishing the draft. Automating that step later requires securely configured GitHub Actions signing and notarization secrets.
+The scheduled workflow can sign the candidate with **your Developer ID Application** certificate and notarize it automatically. Add these five repository secrets under **Settings → Secrets and variables → Actions**:
+
+| Secret | Value |
+| --- | --- |
+| `APPLE_CERTIFICATE_BASE64` | Base64 of a `.p12` export containing your Developer ID Application certificate and private key |
+| `APPLE_P12_PASSWORD` | Password used for that `.p12` export |
+| `APPLE_NOTARY_KEY_ID` | App Store Connect API key ID |
+| `APPLE_NOTARY_ISSUER_ID` | App Store Connect API issuer ID |
+| `APPLE_NOTARY_KEY_P8` | Contents of that API key's `.p8` file |
+
+The workflow imports the certificate into a temporary keychain on the GitHub macOS runner. It accepts exactly one Developer ID Application identity, signs with hardened runtime and a timestamp, requires an Accepted response from Apple's notary service, staples the ticket and then places the finished ZIP in the draft. With none of the five secrets configured, it creates an unsigned draft. A partial secret setup stops the build with an error. Credentials never belong in Git, release assets or logs.
+
+For a `.p12` already exported from Keychain Access, generate the Base64 text locally with `base64 -i DeveloperID.p12`. Paste the resulting text into the GitHub secret. Keep the `.p12`, its password and the `.p8` key private. The owner's Developer ID identity is available in the local Keychain, but the GitHub runner cannot read that Keychain. The one-time secret setup gives the runner its own temporary signing identity.
+
+The Mac app still checks for and installs official KCD:MP client updates when Connect is clicked. The app itself does not yet download a new CEF helper. A candidate must be tested and released before users install that newer app. If a future client changes the reviewed CEF functions, the scheduled workflow fails safely and the upstream developer needs to fix Wine's CPU frame path or the adapter needs a new manual review.

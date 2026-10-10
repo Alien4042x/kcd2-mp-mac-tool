@@ -1,0 +1,168 @@
+{
+  "product": "KCD:MP 0.41.0",
+  "file_version": "0.41.0.0",
+  "machine": 34404,
+  "image_base": 7936671744,
+  "image_size": 14577664,
+  "timestamp": 1791552528,
+  "sha256": "1903aec2fa7dad2979207aa8305c4ad1745c34cefb6513c9d498fea3d1e60d6b",
+  "process_path": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\KingdomComeDeliverance2\\Bin\\Win64MasterMasterSteamPGO\\KingdomCome.exe",
+  "module_name": "KcdMp_client.dll",
+  "client_disk_unchanged": true,
+  "patches": [
+    {
+      "name": "frames_open",
+      "symbol": "_ZN5KcdMp3web6frames4openE5_LUIDRNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE",
+      "rva": 5656656,
+      "raw_offset": 5653584,
+      "section": ".text",
+      "original": "415641554154555756534881ec40",
+      "signature_occurrences": 8,
+      "function_end": 5660112,
+      "replacement": "ff2500000000 + uint64 little-endian helper entry VA",
+      "length": 14
+    },
+    {
+      "name": "frames_paint",
+      "symbol": "_ZN5KcdMp3web6frames9paint_cpuEPKvii",
+      "rva": 5666336,
+      "raw_offset": 5663264,
+      "section": ".text",
+      "original": "56534883ec4848833dfa45820000",
+      "signature_occurrences": 1,
+      "function_end": 5666496,
+      "replacement": "ff2500000000 + uint64 little-endian helper entry VA",
+      "length": 14
+    },
+    {
+      "name": "popup_paint",
+      "symbol": "_ZN5KcdMp3web6frames15paint_popup_cpuEPKvii",
+      "rva": 5663920,
+      "raw_offset": 5660848,
+      "section": ".text",
+      "original": "56534883ec4848833d6a4f820000",
+      "signature_occurrences": 1,
+      "function_end": 5664064,
+      "replacement": "ff2500000000 + uint64 little-endian helper entry VA",
+      "length": 14
+    },
+    {
+      "name": "popup_rect",
+      "symbol": "_ZN5KcdMp3web6frames10popup_rectEiiii",
+      "rva": 5655376,
+      "raw_offset": 5652304,
+      "section": ".text",
+      "original": "4101c8660f6ec1660f6eda4101d1",
+      "signature_occurrences": 1,
+      "function_end": 5655424,
+      "replacement": "ff2500000000 + uint64 little-endian helper entry VA",
+      "length": 14
+    },
+    {
+      "name": "popup_show",
+      "symbol": "_ZN5KcdMp3web6frames10popup_showEb",
+      "rva": 5663456,
+      "raw_offset": 5660384,
+      "section": ".text",
+      "original": "4883ec2848833d3c51820000745a",
+      "signature_occurrences": 1,
+      "function_end": 5663568,
+      "replacement": "ff2500000000 + uint64 little-endian helper entry VA",
+      "length": 14
+    },
+    {
+      "name": "frames_latest",
+      "symbol": "_ZN5KcdMp3web6frames6latestERNS1_9PublishedE",
+      "rva": 5655440,
+      "raw_offset": 5652368,
+      "section": ".text",
+      "original": "5756534883ec20488d35a26f8200",
+      "signature_occurrences": 1,
+      "function_end": 5655536,
+      "replacement": "ff2500000000 + uint64 little-endian helper entry VA",
+      "length": 14
+    },
+    {
+      "name": "record",
+      "symbol": "_ZN5KcdMp3web10compositor12_GLOBAL__N_16recordEP25ID3D12GraphicsCommandListjj",
+      "rva": 5273824,
+      "raw_offset": 5270752,
+      "section": ".text",
+      "original": "4154555756534881ecb00000000f",
+      "signature_occurrences": 8,
+      "function_end": 5274960,
+      "replacement": "ff2500000000 + uint64 little-endian helper entry VA",
+      "length": 14
+    },
+    {
+      "name": "before_submit",
+      "symbol": "_ZN5KcdMp3web10compositor12_GLOBAL__N_113before_submitEP18ID3D12CommandQueue",
+      "rva": 5266528,
+      "raw_offset": 5263456,
+      "section": ".text",
+      "original": "803d05488800007427488b157048",
+      "signature_occurrences": 1,
+      "function_end": 5266896,
+      "replacement": "ff2500000000 + uint64 little-endian helper entry VA",
+      "length": 14
+    },
+    {
+      "name": "after_submit",
+      "symbol": "_ZN5KcdMp3web10compositor12_GLOBAL__N_112after_submitEP18ID3D12CommandQueue",
+      "rva": 5266432,
+      "raw_offset": 5263360,
+      "section": ".text",
+      "original": "4883ec28803d6148880000744448",
+      "signature_occurrences": 1,
+      "function_end": 5266528,
+      "replacement": "ff2500000000 + uint64 little-endian helper entry VA",
+      "length": 14
+    },
+    {
+      "name": "renderer_reset",
+      "symbol": "_ZN5KcdMp3web10compositor12_GLOBAL__N_114renderer_resetEv",
+      "rva": 5267856,
+      "raw_offset": 5264784,
+      "section": ".text",
+      "original": "555756534881ec08010000baffff",
+      "signature_occurrences": 1,
+      "function_end": 5268480,
+      "replacement": "ff2500000000 + uint64 little-endian helper entry VA",
+      "length": 14
+    }
+  ],
+  "read_bindings": {
+    "render_info": 3680160,
+    "loading_visible": 4719312,
+    "loading_covers": 4718960,
+    "enabled": 14198049,
+    "shown": 14198048,
+    "pipeline_failed": 14198016,
+    "frames_drawn": 14198044,
+    "frame_device": 14203944,
+    "set_loading_cover_probe": 4718944,
+    "loading_wants_paint": 5166000,
+    "loading_cover_probe": 14191560,
+    "loading_wants_paint_flag": 14197536
+  },
+  "read_checks": [
+    {
+      "name": "set_loading_cover_probe",
+      "rva": 4718944,
+      "raw_offset": 4715872,
+      "section": ".text",
+      "original": "48870d618a9000c3",
+      "length": 8,
+      "replacement": null
+    },
+    {
+      "name": "loading_wants_paint",
+      "rva": 5166000,
+      "raw_offset": 5162928,
+      "section": ".text",
+      "original": "0fb60569cf890084c00f95c0c3",
+      "length": 13,
+      "replacement": null
+    }
+  ]
+}

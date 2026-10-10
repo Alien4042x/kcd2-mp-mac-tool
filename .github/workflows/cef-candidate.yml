@@ -1,0 +1,251 @@
+name: Prepare Mac CEF candidate
+
+on:
+  schedule:
+    - cron: '37 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.release.outputs.build }}
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Find new official client
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$(gh api repos/dintech-rappy/kcd-mp-releases/releases/latest --jq '.tag_name')"
+          if [[ ! "$tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "::error::Unexpected upstream release tag: $tag"
+            exit 1
+          fi
+          version="${BASH_REMATCH[1]}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          current="$(sed -n 's/^#include "target-\([0-9.]*\)\.h"$/\1/p' cef-source/client_compat/bridge/patch_guard.h)"
+          [[ "$current" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          if [[ "$version" == "$current" ]]; then
+            echo 'build=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if gh release view "cef-ci-$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Candidate draft for $tag already exists."
+            echo 'build=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'build=true' >> "$GITHUB_OUTPUT"
+          fi
+
+  candidate:
+    needs: detect
+    if: needs.detect.outputs.build == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 90
+    outputs:
+      signing: ${{ steps.package.outputs.signing }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Download pinned Windows cross compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/llvm-mingw.tar.xz"
+          curl --fail --location --retry 3 --silent --show-error \
+            'https://github.com/mstorsjo/llvm-mingw/releases/download/20260908/llvm-mingw-20260908-ucrt-macos-universal.tar.xz' \
+            --output "$archive"
+          echo 'd1dc5d1ecf3a3ced5ed5544c72f1acd0c8e84eb3024d520ecc6b143eec62a149  '"$archive" \
+            | shasum -a 256 --check
+          mkdir -p "$RUNNER_TEMP/llvm-mingw"
+          tar -xJf "$archive" -C "$RUNNER_TEMP/llvm-mingw" --strip-components=1
+          test -x "$RUNNER_TEMP/llvm-mingw/bin/x86_64-w64-mingw32-clang++"
+          test -x "$RUNNER_TEMP/llvm-mingw/bin/llvm-objdump"
+          echo "KCDMP_LLVM_MINGW=$RUNNER_TEMP/llvm-mingw" >> "$GITHUB_ENV"
+      - name: Verify publisher archives and extract clients
+        shell: bash
+        env:
+          UPSTREAM_VERSION: ${{ needs.detect.outputs.version }}
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/upstream"
+          mkdir -p "$stage"
+          previous="$(sed -n 's/^#include "target-\([0-9.]*\)\.h"$/\1/p' cef-source/client_compat/bridge/patch_guard.h)"
+          [[ "$previous" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          for version in "$previous" "$UPSTREAM_VERSION"; do
+            file="KcdMp-$version-win-x64.zip"
+            base="https://github.com/dintech-rappy/kcd-mp-releases/releases/download/v$version"
+            curl --fail --location --retry 3 --silent --show-error "$base/$file" --output "$stage/$file"
+            curl --fail --location --retry 3 --silent --show-error "$base/$file.sha256" --output "$stage/$file.sha256"
+            expected="$(awk 'NR == 1 {print $1}' "$stage/$file.sha256")"
+            if [[ ! "$expected" =~ ^[0-9a-f]{64}$ ]]; then
+              echo "::error::Invalid publisher SHA-256 for $file"
+              exit 1
+            fi
+            actual="$(shasum -a 256 "$stage/$file" | awk '{print $1}')"
+            test "$actual" = "$expected"
+            unzip -p "$stage/$file" KcdMp_client.dll > "$stage/client-$version.dll"
+            test -s "$stage/client-$version.dll"
+          done
+          echo "PREVIOUS_VERSION=$previous" >> "$GITHUB_ENV"
+      - name: Prepare and stage exact client candidate
+        shell: bash
+        env:
+          UPSTREAM_VERSION: ${{ needs.detect.outputs.version }}
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/upstream"
+          candidate="$RUNNER_TEMP/candidate"
+          python3 cef-source/client_compat/bridge/prepare_candidate.py \
+            --previous-client "$stage/client-$PREVIOUS_VERSION.dll" \
+            --previous-manifest "cef-source/client_compat/bridge/target-$PREVIOUS_VERSION.json" \
+            --candidate-client "$stage/client-$UPSTREAM_VERSION.dll" \
+            --version "$UPSTREAM_VERSION" --output-dir "$candidate" \
+            --objdump "$KCDMP_LLVM_MINGW/bin/llvm-objdump"
+          python3 cef-source/client_compat/bridge/stage_candidate.py \
+            --candidate-dir "$candidate" --version "$UPSTREAM_VERSION"
+          python3 cef-source/client_compat/bridge/verify_launcher_target.py
+          sh cef-source/client_compat/bridge/build.sh
+          cp cef-source/client_compat/bin/KcdMpCefCompat.dll \
+            cef-compat/client_compat/bin/KcdMpCefCompat.dll
+          python3 cef-source/client_compat/verify_release_binary.py
+          git diff --check
+      - name: Build Mac app
+        shell: bash
+        run: |
+          xcodebuild -quiet -project 'KCDMP Mac.xcodeproj' -scheme 'KCDMP Mac' \
+            -configuration Release -derivedDataPath "$RUNNER_TEMP/kcdmp-build" \
+            CODE_SIGNING_ALLOWED=NO build
+      - name: Sign, notarize and package candidate when credentials are configured
+        id: package
+        shell: bash
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.APPLE_P12_PASSWORD }}
+          NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          NOTARY_KEY_P8: ${{ secrets.APPLE_NOTARY_KEY_P8 }}
+          UPSTREAM_TAG: ${{ needs.detect.outputs.tag }}
+          UPSTREAM_VERSION: ${{ needs.detect.outputs.version }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/package" dist
+          app="$RUNNER_TEMP/package/KCDMP Mac.app"
+          ditto "$RUNNER_TEMP/kcdmp-build/Build/Products/Release/KCDMP Mac.app" "$app"
+          signing=unsigned
+          configured=0
+          for value in "$CERTIFICATE_BASE64" "$P12_PASSWORD" "$NOTARY_KEY_ID" \
+                       "$NOTARY_ISSUER_ID" "$NOTARY_KEY_P8"; do
+            [[ -z "$value" ]] || configured=$((configured + 1))
+          done
+          if [[ "$configured" -ne 0 && "$configured" -ne 5 ]]; then
+            echo '::error::Configure all five Apple signing secrets together'
+            exit 1
+          fi
+          if [[ -n "$CERTIFICATE_BASE64" && -n "$P12_PASSWORD" && \
+                -n "$NOTARY_KEY_ID" && -n "$NOTARY_ISSUER_ID" && -n "$NOTARY_KEY_P8" ]]; then
+            keychain="$RUNNER_TEMP/kcdmp-signing.keychain-db"
+            keychain_password="$(openssl rand -hex 24)"
+            printf '%s' "$CERTIFICATE_BASE64" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+            printf '%s' "$NOTARY_KEY_P8" > "$RUNNER_TEMP/notary-key.p8"
+            security create-keychain -p "$keychain_password" "$keychain"
+            security set-keychain-settings -lut 21600 "$keychain"
+            security unlock-keychain -p "$keychain_password" "$keychain"
+            security import "$RUNNER_TEMP/certificate.p12" -P "$P12_PASSWORD" \
+              -A -t cert -f pkcs12 -k "$keychain"
+            security set-key-partition-list -S apple-tool:,apple: -s \
+              -k "$keychain_password" "$keychain"
+            security list-keychains -d user -s "$keychain"
+            identity="$(security find-identity -v -p codesigning "$keychain" \
+              | awk '/Developer ID Application/ {print $2}')"
+            if [[ -z "$identity" || "$identity" == *$'\n'* ]]; then
+              echo '::error::Expected exactly one Developer ID Application identity in the imported certificate'
+              exit 1
+            fi
+            codesign --force --deep --options runtime --timestamp --sign "$identity" "$app"
+            codesign --verify --deep --strict "$app"
+            preflight="$RUNNER_TEMP/notary-upload.zip"
+            ditto -c -k --sequesterRsrc --keepParent "$app" "$preflight"
+            xcrun notarytool submit "$preflight" \
+              --key "$RUNNER_TEMP/notary-key.p8" \
+              --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" \
+              --wait --output-format json > "$RUNNER_TEMP/notary-result.json"
+            python3 - "$RUNNER_TEMP/notary-result.json" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding='utf-8') as result_file:
+              result = json.load(result_file)
+          if result.get('status') != 'Accepted':
+              raise SystemExit('Apple notarization did not return Accepted: '
+                               + str(result.get('status', 'missing status')))
+          PY
+            xcrun stapler staple "$app"
+            xcrun stapler validate "$app"
+            spctl --assess --type execute --verbose "$app"
+            signing=developer-id-notarized
+          fi
+          zip="dist/KCDMP-Mac-CEF-candidate-$UPSTREAM_TAG.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$app" "$zip"
+          shasum -a 256 "$zip" > "$zip.sha256"
+          cp "$RUNNER_TEMP/candidate/candidate-$UPSTREAM_VERSION.json" dist/
+          cp "$RUNNER_TEMP/candidate/target-$UPSTREAM_VERSION.json" dist/
+          echo "signing=$signing" >> "$GITHUB_OUTPUT"
+          echo "$signing" > dist/signing-status.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: KCDMP-CEF-${{ needs.detect.outputs.tag }}-candidate
+          path: dist/
+          if-no-files-found: error
+
+  save-draft:
+    needs: [detect, candidate]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: KCDMP-CEF-${{ needs.detect.outputs.tag }}-candidate
+          path: dist
+      - name: Keep candidate unpublished for live game verification
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_TAG: ${{ needs.detect.outputs.tag }}
+          SIGNING: ${{ needs.candidate.outputs.signing }}
+        run: |
+          set -euo pipefail
+          zip="dist/KCDMP-Mac-CEF-candidate-$UPSTREAM_TAG.zip"
+          test -s "$zip"
+          test -s "$zip.sha256"
+          cat > release-notes.md <<EOF
+          Automatic CEF compatibility candidate for official KCD:MP $UPSTREAM_TAG.
+
+          The exact client DLL, function bodies and data bindings passed static checks.
+          Signing status: $SIGNING.
+
+          This build has not passed a live Mac game test. It remains a draft.
+          If the candidate fails, the previous reviewed helper is never injected into
+          the changed client.
+          EOF
+          gh release create "cef-ci-$UPSTREAM_TAG" \
+            "$zip" "$zip.sha256" \
+            "dist/candidate-${UPSTREAM_TAG#v}.json" \
+            "dist/target-${UPSTREAM_TAG#v}.json" \
+            dist/signing-status.txt \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Mac CEF candidate for KCD:MP $UPSTREAM_TAG" \
+            --notes-file release-notes.md --draft --prerelease

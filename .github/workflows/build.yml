@@ -5,48 +5,12 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
-  schedule:
-    - cron: '37 */6 * * *'
 
 permissions:
   contents: read
 
 jobs:
-  detect:
-    runs-on: ubuntu-latest
-    outputs:
-      should_build: ${{ steps.upstream.outputs.should_build }}
-      upstream_tag: ${{ steps.upstream.outputs.upstream_tag }}
-    steps:
-      - name: Check official KCD:MP release
-        id: upstream
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if [[ "$GITHUB_EVENT_NAME" != schedule ]]; then
-            echo 'should_build=true' >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          tag="$(gh api repos/dintech-rappy/kcd-mp-releases/releases/latest --jq '.tag_name')"
-          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Unexpected upstream release tag: $tag"
-            exit 1
-          fi
-          echo "upstream_tag=$tag" >> "$GITHUB_OUTPUT"
-
-          if gh release view "ci-$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "KCD:MP $tag already has a Mac test build."
-            echo 'should_build=false' >> "$GITHUB_OUTPUT"
-          else
-            echo "New KCD:MP release: $tag"
-            echo 'should_build=true' >> "$GITHUB_OUTPUT"
-          fi
-
   build:
-    needs: detect
-    if: needs.detect.outputs.should_build == 'true'
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
@@ -55,6 +19,7 @@ jobs:
           persist-credentials: false
       - name: Check bundled helper files
         run: |
+          python3 cef-source/client_compat/bridge/verify_launcher_target.py
           test -s cef-compat/client_compat/bin/KcdMpCefCompat.dll
           test -s cef-compat/client_compat/loader/bin/kcdmp_compat_loader.exe
           test -s cef-compat/client_compat/loader/bin/kcdmp_compat_watcher.exe
@@ -75,44 +40,8 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: github.event_name != 'pull_request'
         with:
-          name: KCDMP-Mac-${{ needs.detect.outputs.upstream_tag || github.run_id }}-unsigned
+          name: KCDMP-Mac-${{ github.run_id }}-unsigned
           path: |
             ${{ runner.temp }}/KCDMP-Mac-test-build.zip
             ${{ runner.temp }}/KCDMP-Mac-test-build.zip.sha256
           if-no-files-found: error
-
-  save-draft:
-    if: github.event_name == 'schedule'
-    needs: [detect, build]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v8
-        with:
-          name: KCDMP-Mac-${{ needs.detect.outputs.upstream_tag }}-unsigned
-          path: dist
-      - name: Save test build as a draft release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          UPSTREAM_TAG: ${{ needs.detect.outputs.upstream_tag }}
-        run: |
-          test -s dist/KCDMP-Mac-test-build.zip
-          test -s dist/KCDMP-Mac-test-build.zip.sha256
-          cat > release-notes.md <<'NOTES'
-          Automatic Mac launcher test build after a new official KCD:MP client release.
-
-          This app is unsigned and has not been notarized. It is saved as a draft for review.
-          Connect uses the official KCD:MP updater. The bundled CEF helper only runs with
-          an exact reviewed client DLL. New versions use the official direct launch path
-          until their CEF behavior has been checked.
-          NOTES
-          gh release create "ci-$UPSTREAM_TAG" \
-            dist/KCDMP-Mac-test-build.zip \
-            dist/KCDMP-Mac-test-build.zip.sha256 \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "Mac test build for KCD:MP $UPSTREAM_TAG" \
-            --notes-file release-notes.md \
-            --draft --prerelease
