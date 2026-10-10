@@ -197,7 +197,7 @@ jobs:
             spctl --assess --type execute --verbose "$app"
             signing=developer-id-notarized
           fi
-          zip="dist/KCDMP-Mac-CEF-candidate-$UPSTREAM_TAG.zip"
+          zip="dist/KCDMP-Mac-$UPSTREAM_TAG.zip"
           ditto -c -k --sequesterRsrc --keepParent "$app" "$zip"
           shasum -a 256 "$zip" > "$zip.sha256"
           cp "$RUNNER_TEMP/candidate/candidate-$UPSTREAM_VERSION.json" dist/
@@ -228,18 +228,33 @@ jobs:
           SIGNING: ${{ needs.candidate.outputs.signing }}
         run: |
           set -euo pipefail
-          zip="dist/KCDMP-Mac-CEF-candidate-$UPSTREAM_TAG.zip"
+          zip="dist/KCDMP-Mac-$UPSTREAM_TAG.zip"
           test -s "$zip"
           test -s "$zip.sha256"
+          if [[ "$SIGNING" == developer-id-notarized ]]; then
+            signing_note='Signed with Developer ID Application and notarized by Apple.'
+          elif [[ "$SIGNING" == unsigned ]]; then
+            signing_note='Unsigned CI build. Configure the Apple signing secrets before publishing a user download.'
+          else
+            echo "::error::Unexpected signing status: $SIGNING"
+            exit 1
+          fi
           cat > release-notes.md <<EOF
-          Automatic CEF compatibility candidate for official KCD:MP $UPSTREAM_TAG.
+          KCDMP Mac for official KCD:MP **$UPSTREAM_TAG**.
 
-          The exact client DLL, function bodies and data bindings passed static checks.
-          Signing status: $SIGNING.
+          ## Mac compatibility
 
-          This build has not passed a live Mac game test. It remains a draft.
-          If the candidate fails, the previous reviewed helper is never injected into
-          the changed client.
+          - Includes a CEF helper matched to this exact official client version. The publisher's archive checksum and the helper's required client functions passed automated checks.
+          - $signing_note
+          - The launcher installs official KCD:MP client updates when you press Connect.
+
+          ## Before publishing
+
+          This draft still needs one live Mac check: connect to a server and confirm the CEF panels appear. GitHub Actions cannot run KCD2 or verify the panels visually.
+
+          ## KCD:MP changes
+
+          See the [official KCD:MP $UPSTREAM_TAG release notes](https://github.com/dintech-rappy/kcd-mp-releases/releases/tag/$UPSTREAM_TAG) for gameplay and client changes.
           EOF
           gh release create "cef-ci-$UPSTREAM_TAG" \
             "$zip" "$zip.sha256" \
@@ -247,5 +262,6 @@ jobs:
             "dist/target-${UPSTREAM_TAG#v}.json" \
             dist/signing-status.txt \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "Mac CEF candidate for KCD:MP $UPSTREAM_TAG" \
-            --notes-file release-notes.md --draft --prerelease
+            --title "KCDMP Mac for KCD:MP $UPSTREAM_TAG" \
+            --notes "$(cat release-notes.md)" --generate-notes \
+            --draft --prerelease

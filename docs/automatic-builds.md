@@ -6,6 +6,8 @@ The **Prepare Mac CEF candidate** workflow checks the [official KCD:MP releases]
 
 When those checks pass, the workflow builds a new exact-version helper and Mac app in its temporary checkout. It saves the app and the target manifest in an unpublished draft release tagged `cef-ci-vX.Y.Z`. No commit or manual Git push is needed for a new candidate. The candidate remains unpublished until someone verifies the web panels and game stability in a live Mac session. A GitHub build cannot run KCD2 or prove that CEF renders in the game.
 
+The draft is titled `KCDMP Mac for KCD:MP vX.Y.Z`. Its description is filled automatically with the verified compatibility and signing status, a link to the official KCD:MP release notes, and the remaining in-game check. GitHub also adds its generated changelog for changes in this repository. That changelog is based on commits and pull requests, not AI, and cannot describe a client update that happened only in the publisher's repository.
+
 The Xcode project generates `CEFClientTarget.swift` from the selected verified client manifest before compiling. The app's version and SHA-256 are never typed into the launcher by hand. The build checks that the manifest, CEF helper header and generated Swift file agree.
 
 ## One-time signing setup

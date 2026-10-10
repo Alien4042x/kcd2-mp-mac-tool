@@ -29,19 +29,19 @@ jobs:
           xcodebuild -quiet -project 'KCDMP Mac.xcodeproj' -scheme 'KCDMP Mac' \
             -configuration Release -derivedDataPath "$RUNNER_TEMP/kcdmp-build" \
             CODE_SIGNING_ALLOWED=NO build
-      - name: Pack unsigned test build
+      - name: Pack unsigned CI build
         if: github.event_name != 'pull_request'
         run: |
           ditto -c -k --sequesterRsrc --keepParent \
             "$RUNNER_TEMP/kcdmp-build/Build/Products/Release/KCDMP Mac.app" \
-            "$RUNNER_TEMP/KCDMP-Mac-test-build.zip"
-          (cd "$RUNNER_TEMP" && shasum -a 256 KCDMP-Mac-test-build.zip \
-            > KCDMP-Mac-test-build.zip.sha256)
+            "$RUNNER_TEMP/KCDMP-Mac-CI.zip"
+          (cd "$RUNNER_TEMP" && shasum -a 256 KCDMP-Mac-CI.zip \
+            > KCDMP-Mac-CI.zip.sha256)
       - uses: actions/upload-artifact@v7
         if: github.event_name != 'pull_request'
         with:
           name: KCDMP-Mac-${{ github.run_id }}-unsigned
           path: |
-            ${{ runner.temp }}/KCDMP-Mac-test-build.zip
-            ${{ runner.temp }}/KCDMP-Mac-test-build.zip.sha256
+            ${{ runner.temp }}/KCDMP-Mac-CI.zip
+            ${{ runner.temp }}/KCDMP-Mac-CI.zip.sha256
           if-no-files-found: error
