@@ -151,6 +151,9 @@ jobs:
           if hashlib.sha256(client).hexdigest() != manifest['sha256']:
               raise SystemExit('Selected CEF target differs from official client DLL')
           PY
+          sh cef-source/client_compat/bridge/build.sh
+          cp cef-source/client_compat/bin/KcdMpCefCompat.dll \
+            cef-compat/client_compat/bin/KcdMpCefCompat.dll
           python3 cef-source/client_compat/verify_release_binary.py
       - name: Build Mac app
         shell: bash
