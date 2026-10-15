@@ -1,0 +1,217 @@
+name: Prepare Mac CEF candidate
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+  schedule:
+    - cron: '37 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mac-cef-candidate-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.release.outputs.build }}
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Find new official client
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$(gh api repos/dintech-rappy/kcd-mp-releases/releases/latest --jq '.tag_name')"
+          if [[ ! "$tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "::error::Unexpected upstream release tag: $tag"
+            exit 1
+          fi
+          version="${BASH_REMATCH[1]}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          current="$(sed -n 's/^#include "target-\([0-9.]*\)\.h"$/\1/p' cef-source/client_compat/bridge/patch_guard.h)"
+          [[ "$current" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          if gh release view "cef-ci-$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Candidate draft for $tag already exists."
+            echo 'build=false' >> "$GITHUB_OUTPUT"
+          elif [[ "$version" == "$current" ]]; then
+            echo 'build=current' >> "$GITHUB_OUTPUT"
+          else
+            echo 'build=candidate' >> "$GITHUB_OUTPUT"
+          fi
+
+  candidate:
+    needs: detect
+    if: needs.detect.outputs.build == 'current' || needs.detect.outputs.build == 'candidate'
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Download pinned Windows cross compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/llvm-mingw.tar.xz"
+          curl --fail --location --retry 3 --silent --show-error \
+            'https://github.com/mstorsjo/llvm-mingw/releases/download/20260908/llvm-mingw-20260908-ucrt-macos-universal.tar.xz' \
+            --output "$archive"
+          echo 'd1dc5d1ecf3a3ced5ed5544c72f1acd0c8e84eb3024d520ecc6b143eec62a149  '"$archive" \
+            | shasum -a 256 --check
+          mkdir -p "$RUNNER_TEMP/llvm-mingw"
+          tar -xJf "$archive" -C "$RUNNER_TEMP/llvm-mingw" --strip-components=1
+          test -x "$RUNNER_TEMP/llvm-mingw/bin/x86_64-w64-mingw32-clang++"
+          test -x "$RUNNER_TEMP/llvm-mingw/bin/llvm-objdump"
+          echo "KCDMP_LLVM_MINGW=$RUNNER_TEMP/llvm-mingw" >> "$GITHUB_ENV"
+      - name: Verify publisher archives and extract clients
+        shell: bash
+        env:
+          UPSTREAM_VERSION: ${{ needs.detect.outputs.version }}
+          BUILD_MODE: ${{ needs.detect.outputs.build }}
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/upstream"
+          mkdir -p "$stage"
+          previous="$(sed -n 's/^#include "target-\([0-9.]*\)\.h"$/\1/p' cef-source/client_compat/bridge/patch_guard.h)"
+          [[ "$previous" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          versions=("$UPSTREAM_VERSION")
+          if [[ "$BUILD_MODE" == candidate ]]; then
+            versions=("$previous" "$UPSTREAM_VERSION")
+          fi
+          for version in "${versions[@]}"; do
+            file="KcdMp-$version-win-x64.zip"
+            base="https://github.com/dintech-rappy/kcd-mp-releases/releases/download/v$version"
+            curl --fail --location --retry 3 --silent --show-error "$base/$file" --output "$stage/$file"
+            curl --fail --location --retry 3 --silent --show-error "$base/$file.sha256" --output "$stage/$file.sha256"
+            expected="$(awk 'NR == 1 {print $1}' "$stage/$file.sha256")"
+            if [[ ! "$expected" =~ ^[0-9a-f]{64}$ ]]; then
+              echo "::error::Invalid publisher SHA-256 for $file"
+              exit 1
+            fi
+            actual="$(shasum -a 256 "$stage/$file" | awk '{print $1}')"
+            test "$actual" = "$expected"
+            unzip -p "$stage/$file" KcdMp_client.dll > "$stage/client-$version.dll"
+            test -s "$stage/client-$version.dll"
+          done
+          echo "PREVIOUS_VERSION=$previous" >> "$GITHUB_ENV"
+      - name: Prepare and stage exact client candidate
+        if: needs.detect.outputs.build == 'candidate'
+        shell: bash
+        env:
+          UPSTREAM_VERSION: ${{ needs.detect.outputs.version }}
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/upstream"
+          candidate="$RUNNER_TEMP/candidate"
+          python3 cef-source/client_compat/bridge/prepare_candidate.py \
+            --previous-client "$stage/client-$PREVIOUS_VERSION.dll" \
+            --previous-manifest "cef-source/client_compat/bridge/target-$PREVIOUS_VERSION.json" \
+            --candidate-client "$stage/client-$UPSTREAM_VERSION.dll" \
+            --version "$UPSTREAM_VERSION" --output-dir "$candidate" \
+            --objdump "$KCDMP_LLVM_MINGW/bin/llvm-objdump"
+          python3 cef-source/client_compat/bridge/stage_candidate.py \
+            --candidate-dir "$candidate" --version "$UPSTREAM_VERSION"
+          python3 cef-source/client_compat/bridge/verify_launcher_target.py
+          sh cef-source/client_compat/bridge/build.sh
+          cp cef-source/client_compat/bin/KcdMpCefCompat.dll \
+            cef-compat/client_compat/bin/KcdMpCefCompat.dll
+          python3 cef-source/client_compat/verify_release_binary.py
+          git diff --check
+      - name: Verify already selected exact client
+        if: needs.detect.outputs.build == 'current'
+        shell: bash
+        env:
+          UPSTREAM_VERSION: ${{ needs.detect.outputs.version }}
+        run: |
+          set -euo pipefail
+          python3 cef-source/client_compat/bridge/verify_launcher_target.py
+          python3 - "$RUNNER_TEMP/upstream/client-$UPSTREAM_VERSION.dll" \
+            "cef-source/client_compat/bridge/target-$UPSTREAM_VERSION.json" <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import sys
+
+          client = pathlib.Path(sys.argv[1]).read_bytes()
+          manifest = json.loads(pathlib.Path(sys.argv[2]).read_text())
+          if hashlib.sha256(client).hexdigest() != manifest['sha256']:
+              raise SystemExit('Selected CEF target differs from official client DLL')
+          PY
+          python3 cef-source/client_compat/verify_release_binary.py
+      - name: Build Mac app
+        shell: bash
+        run: |
+          xcodebuild -quiet -project 'KCDMP Mac.xcodeproj' -scheme 'KCDMP Mac' \
+            -configuration Release -derivedDataPath "$RUNNER_TEMP/kcdmp-build" \
+            CODE_SIGNING_ALLOWED=NO build
+      - name: Package unsigned candidate
+        shell: bash
+        env:
+          UPSTREAM_TAG: ${{ needs.detect.outputs.tag }}
+          UPSTREAM_VERSION: ${{ needs.detect.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          zip="dist/KCDMP-Mac-$UPSTREAM_TAG.zip"
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$RUNNER_TEMP/kcdmp-build/Build/Products/Release/KCDMP Mac.app" "$zip"
+          shasum -a 256 "$zip" > "$zip.sha256"
+          if [[ -f "$RUNNER_TEMP/candidate/candidate-$UPSTREAM_VERSION.json" ]]; then
+            cp "$RUNNER_TEMP/candidate/candidate-$UPSTREAM_VERSION.json" dist/
+            cp "$RUNNER_TEMP/candidate/target-$UPSTREAM_VERSION.json" dist/
+          else
+            cp "cef-source/client_compat/bridge/target-$UPSTREAM_VERSION.json" dist/
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: KCDMP-CEF-${{ needs.detect.outputs.tag }}-candidate
+          path: dist/
+          if-no-files-found: error
+
+  save-draft:
+    needs: [detect, candidate]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: KCDMP-CEF-${{ needs.detect.outputs.tag }}-candidate
+          path: dist
+      - name: Keep candidate unpublished for live game verification
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_TAG: ${{ needs.detect.outputs.tag }}
+        run: |
+          set -euo pipefail
+          zip="dist/KCDMP-Mac-$UPSTREAM_TAG.zip"
+          test -s "$zip"
+          test -s "$zip.sha256"
+          cat > release-notes.md <<EOF
+          Unsigned KCDMP Mac test build for KCD:MP $UPSTREAM_TAG.
+
+          Sign and notarize the app on your Mac, then check the CEF panels in game before publishing.
+
+          [KCD:MP $UPSTREAM_TAG changes](https://github.com/dintech-rappy/kcd-mp-releases/releases/tag/$UPSTREAM_TAG)
+          EOF
+          gh release create "cef-ci-$UPSTREAM_TAG" \
+            "$zip" \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "KCDMP Mac for KCD:MP $UPSTREAM_TAG" \
+            --notes "$(cat release-notes.md)" \
+            --draft --prerelease

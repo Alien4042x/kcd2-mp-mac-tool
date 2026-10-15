@@ -1,0 +1,10 @@
+.build/
+KCDMP Mac.app/
+.DS_Store
+*.xcuserstate
+xcuserdata/
+cef-source/client_compat/bin/
+cef-source/client_compat/loader/bin/
+cef-source/client_compat/probe/bin/
+__pycache__/
+*.pyc

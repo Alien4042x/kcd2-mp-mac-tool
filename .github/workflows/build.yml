@@ -1,0 +1,50 @@
+name: Build Mac launcher
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '.github/workflows/cef-candidate.yml'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Check bundled helper files
+        run: |
+          python3 cef-source/client_compat/bridge/verify_launcher_target.py
+          test -s cef-compat/client_compat/bin/KcdMpCefCompat.dll
+          test -s cef-compat/client_compat/loader/bin/kcdmp_compat_loader.exe
+          test -s cef-compat/client_compat/loader/bin/kcdmp_compat_watcher.exe
+          zsh -n kcdmp-launch.sh
+      - name: Build
+        run: |
+          xcodebuild -quiet -project 'KCDMP Mac.xcodeproj' -scheme 'KCDMP Mac' \
+            -configuration Release -derivedDataPath "$RUNNER_TEMP/kcdmp-build" \
+            CODE_SIGNING_ALLOWED=NO build
+      - name: Pack unsigned CI build
+        if: github.event_name != 'pull_request'
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$RUNNER_TEMP/kcdmp-build/Build/Products/Release/KCDMP Mac.app" \
+            "$RUNNER_TEMP/KCDMP-Mac-CI.zip"
+          (cd "$RUNNER_TEMP" && shasum -a 256 KCDMP-Mac-CI.zip \
+            > KCDMP-Mac-CI.zip.sha256)
+      - uses: actions/upload-artifact@v7
+        if: github.event_name != 'pull_request'
+        with:
+          name: KCDMP-Mac-${{ github.run_id }}-unsigned
+          path: |
+            ${{ runner.temp }}/KCDMP-Mac-CI.zip
+            ${{ runner.temp }}/KCDMP-Mac-CI.zip.sha256
+          if-no-files-found: error
