@@ -2,7 +2,7 @@
 
 A small native macOS launcher for [KCD:MP](https://kcd-mp.com/). It shows multiplayer servers and starts the official Windows KCD:MP client in the same bottle as a running Windows Steam client. You need your own Steam copy of Kingdom Come: Deliverance II. This repository does not include the game or the multiplayer client.
 
-**CEF support is experimental.** The bundled compatibility helper targets the exact KCD:MP 0.44.0 client in WineForge. Its functions passed the exact-version comparison and the Mac app built successfully. CEF 0.44.0 has not yet been verified in a live game. CrossOver uses the direct launch path without this helper. This build is for local testing, not a stable public release.
+**CEF support is experimental.** The bundled compatibility helper targets the exact KCD:MP 0.45.0 client in WineForge. The changed 0.45.0 function was manually reviewed, and the Mac app built successfully. CEF 0.45.0 has not yet been verified in a live game. CrossOver uses the direct launch path without this helper. This build is for local testing, not a stable public release.
 
 ## Install
 
@@ -34,11 +34,11 @@ CrossOver still uses the original launch path without the CEF helper. Its comman
 
 ## Updates
 
-**Connect checks for KCD:MP updates.** For a server on the latest version, it installs the latest official client before joining. When a selected public server is still on an older major/minor version, it leaves the installed client alone. On the exact 0.44.0 DLL it uses the bundled CEF helper. For any other DLL it tries the official client directly, without injecting this helper. The game may run without the Mac CEF interface until that release is tested. Direct addresses have no version information, so Connect follows the latest official release for them. The launch script also has an explicit `--update-only` action for manual use.
+**Connect checks for KCD:MP updates.** For a server on the latest version, it installs the latest official client before joining. When a selected public server is still on an older major/minor version, it leaves the installed client alone. On the exact 0.45.0 DLL it uses the bundled CEF helper. For any other DLL it tries the official client directly, without injecting this helper. The game may run without the Mac CEF interface until that release is tested. Direct addresses have no version information, so Connect follows the latest official release for them. The launch script also has an explicit `--update-only` action for manual use.
 
 Steam updates the base game. The Mac app itself does not auto-update. The official updater handles ordinary KCD:MP client updates without a new Mac app or Git commit while its command line remains compatible. A new reviewed helper and Mac build are needed to restore CEF support after an incompatible client DLL change.
 
-GitHub Actions builds the Xcode project on every push and checks official KCD:MP releases on `main` pushes and every six hours. It can package the selected exact client or prepare a new helper when the strict client comparison passes. The result stays in an unpublished draft release as an unsigned ZIP for a live game check. Sign and notarize locally before publishing. See [automatic builds](docs/automatic-builds.md). For a local build, run `./build.command`, which uses a Developer ID Application identity available on your Mac. Review CEF changes before publishing a new helper.
+GitHub Actions checks official KCD:MP releases once a day or when started manually. It builds a draft ZIP only when the latest release has no matching Mac ZIP and a reviewed CEF target is available or the strict client comparison passes. A changed CEF function stops automatic preparation until it is reviewed. The result stays in an unpublished draft release as an unsigned ZIP for a live game check. Sign and notarize locally before publishing. See [automatic builds](docs/automatic-builds.md). For a local build, run `./build.command`, which uses a Developer ID Application identity available on your Mac. Review CEF changes before publishing a new helper.
 
 The official **Compatible** interface setting selects CPU frames. Without the Mac helper, the observed WineForge run could not create its ready fence or event query, so the game kept its native interface. A durable upstream fix needs a supported CPU composition path in the KCD:MP client. The [upstream request](cef-source/client_compat/UPSTREAM-CEF-REQUEST.md) records the evidence and proposed client change.
 
