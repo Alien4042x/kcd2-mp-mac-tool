@@ -200,6 +200,11 @@ struct ServerRow: View {
 
 struct ContentView: View {
     @StateObject private var model = LauncherModel()
+    @StateObject private var savedServers = SavedServers()
+    @StateObject private var audio = AudioSettingsModel()
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var showingAudio = false
+    @State private var preparingJoin = false
     @AppStorage("KCDMPPlayerName") private var nickname = ""
     @AppStorage("KCDMPLauncherPath") private var launcherPath = "~/WineForge/Steam/drive_c/Program Files (x86)/Steam/steamapps/Common/KingdomComeDeliverance2/Bin/Win64MasterMasterSteamPGO/KcdMp_launcher.exe"
     @State private var serverPassword = ""
@@ -233,7 +238,11 @@ struct ContentView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("KCD:MP for Mac").font(.system(size: 28, weight: .bold, design: .rounded))
+            HStack {
+                Text("KCD:MP for Mac").font(.system(size: 28, weight: .bold, design: .rounded))
+                Spacer()
+                Button("Audio & Microphone…") { showingAudio = true }
+            }
 
             HStack {
                 Text("KCD:MP file")
@@ -254,6 +263,30 @@ struct ContentView: View {
                     SecureField("For locked servers only", text: $serverPassword)
                         .disabled(!needsServerPassword)
                 }
+            }
+
+            HStack {
+                Menu("Favorites (\(savedServers.favorites.count))") {
+                    ForEach(savedServers.favorites) { server in
+                        Button("\(server.name) — \(server.address)") { selectSaved(server) }
+                    }
+                }.disabled(savedServers.favorites.isEmpty)
+                Menu("Recent Servers") {
+                    ForEach(savedServers.recent) { server in
+                        Button("\(server.name) — \(server.address)") { selectSaved(server) }
+                    }
+                }.disabled(savedServers.recent.isEmpty)
+                Spacer()
+                Button {
+                    savedServers.toggleFavorite(address: targetAddress,
+                                                name: model.servers.first { $0.id == targetAddress }?.name ?? targetAddress)
+                } label: {
+                    Label(savedServers.isFavorite(targetAddress) ? "Remove Favorite" : "Add Favorite",
+                          systemImage: savedServers.isFavorite(targetAddress) ? "star.fill" : "star")
+                }.disabled(!validServerAddress(targetAddress))
+            }
+            if let error = savedServers.storageError {
+                Text(error).font(.caption).foregroundStyle(.orange)
             }
 
             HStack {
@@ -278,7 +311,7 @@ struct ContentView: View {
                     .textFieldStyle(.roundedBorder)
                 Button("Connect") { joinSelected() }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(model.gameRunning)
+                    .disabled(model.gameRunning || audio.requesting || preparingJoin)
             }
 
             Text(model.actionStatus).font(.caption).foregroundStyle(.secondary)
@@ -288,6 +321,22 @@ struct ContentView: View {
         .task {
             migrateLauncherPath()
             await model.refreshServers()
+        }
+        .sheet(isPresented: $showingAudio) {
+            AudioSettingsView(model: audio, launcherPath: expandedLauncherPath)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { audio.refreshPermission() }
+        }
+    }
+
+    private func selectSaved(_ server: SavedServer) {
+        if model.servers.contains(where: { $0.id == server.address }) {
+            selectedID = server.address
+            directAddress = ""
+        } else {
+            selectedID = nil
+            directAddress = server.address
         }
     }
 
@@ -314,6 +363,7 @@ struct ContentView: View {
     }
 
     private func joinSelected() {
+        guard !model.gameRunning, !preparingJoin else { return }
         let name = nickname.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else {
             model.actionStatus = "Enter your nickname first."
@@ -324,8 +374,7 @@ struct ContentView: View {
             return
         }
         let address = targetAddress
-        guard address.range(of: #"^[A-Za-z0-9.-]+:[0-9]{1,5}$"#, options: .regularExpression) != nil,
-              let port = Int(address.split(separator: ":").last ?? ""), (1...65535).contains(port) else {
+        guard validServerAddress(address) else {
             model.actionStatus = "Select a server or enter an address as host:port."
             return
         }
@@ -336,8 +385,16 @@ struct ContentView: View {
         let token = needsServerPassword ? serverPassword : ""
         let version = directAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? selectedServer?.version : nil
-        model.join(address: address, name: name, password: token, launcherPath: expandedLauncherPath,
-                   serverVersion: version)
+        let path = expandedLauncherPath
+        let serverName = model.servers.first { $0.id == address }?.name ?? address
+        preparingJoin = true
+        Task { @MainActor in
+            defer { preparingJoin = false }
+            await audio.requestAccess()
+            savedServers.remember(address: address, name: serverName)
+            model.join(address: address, name: name, password: token, launcherPath: path,
+                       serverVersion: version)
+        }
         serverPassword = ""
     }
 }

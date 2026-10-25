@@ -27,9 +27,10 @@ rm -rf "$staged_app"
 mkdir -p "${staged_app:h}"
 ditto "$built_app" "$staged_app"
 if [[ "$signing_identity" == '-' ]]; then
-  codesign --force --deep --sign - "$staged_app"
+  codesign --force --deep --entitlements "$source_dir/KCDMP.entitlements" --sign - "$staged_app"
 else
   codesign --force --deep --options runtime --timestamp \
+    --entitlements "$source_dir/KCDMP.entitlements" \
     --sign "$signing_identity" "$staged_app"
 fi
 codesign --verify --deep --strict "$staged_app"
