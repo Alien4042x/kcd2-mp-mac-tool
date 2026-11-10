@@ -8,9 +8,19 @@ import unittest
 from select_cef_candidate import current_version, read_json, select
 
 
+def asset(name, size=100):
+    return {"name": name, "state": "uploaded", "size": size}
+
+
+def upstream_release(version, kind="client"):
+    stem = f"KcdMp-{version}-win-x64.zip" if kind == "client" else f"KcdMp-server-{version}.zip"
+    return {"tag_name": f"v{version}", "draft": False, "prerelease": False,
+            "assets": [asset(stem), asset(f"{stem}.sha256")]}
+
+
 class CandidateSelectionTests(unittest.TestCase):
     def setUp(self):
-        self.upstream = {"tag_name": "v0.44.0"}
+        self.upstream = [[upstream_release("0.44.0")]]
         self.release = {"tag_name": "1.0", "assets": [
             {"name": "KCDMP-Mac-v0.44.0.zip", "state": "uploaded", "size": 4689194}]}
 
@@ -26,11 +36,44 @@ class CandidateSelectionTests(unittest.TestCase):
         self.assertEqual(select(self.upstream, [[]], "0.44.0")[2], "current")
         self.assertEqual(select(self.upstream, [[]], "0.43.0")[2], "candidate")
         self.release["assets"][0]["size"] = 0
-        self.assertEqual(select(self.upstream, [[self.release]], "0.44.0")[2], "current")
+        with self.assertRaisesRegex(ValueError, "Mac ZIP .* incomplete"):
+            select(self.upstream, [[self.release]], "0.44.0")
+
+    def test_pending_mac_zip_does_not_trigger_duplicate_build(self):
+        self.release["assets"][0]["state"] = "new"
+        with self.assertRaisesRegex(ValueError, "Mac ZIP .* incomplete"):
+            select(self.upstream, [[self.release]], "0.44.0")
+
+    def test_server_only_update_uses_latest_client(self):
+        upstream = [[upstream_release("0.49.1", "server")],
+                    [upstream_release("0.49.0")]]
+        released = {"assets": [asset("KCDMP-Mac-v0.49.0.zip")]}
+        self.assertEqual(select(upstream, [[released]], "0.45.0"),
+                         ("v0.49.0", "0.49.0", "false"))
+        self.assertEqual(select(upstream, [[]], "0.45.0"),
+                         ("v0.49.0", "0.49.0", "candidate"))
+
+    def test_incomplete_new_client_fails_instead_of_using_older_client(self):
+        incomplete = upstream_release("0.50.0")
+        incomplete["assets"].pop()
+        upstream = [[incomplete, upstream_release("0.49.0")]]
+        with self.assertRaisesRegex(ValueError, "incomplete Windows client"):
+            select(upstream, [[]], "0.45.0")
+
+    def test_server_only_release_requires_complete_assets(self):
+        server = upstream_release("0.49.1", "server")
+        server["assets"][1]["size"] = None
+        with self.assertRaisesRegex(ValueError, "invalid asset size"):
+            select([[server, upstream_release("0.49.0")]], [[]], "0.45.0")
 
     def test_incomplete_api_data_fails_instead_of_building(self):
+        missing_tag = upstream_release("0.44.0")
+        missing_tag["tag_name"] = None
+        missing_assets = upstream_release("0.44.0")
+        missing_assets["assets"] = None
         for upstream, releases in [
-            ({}, [[]]), ({"tag_name": None}, [[]]),
+            (None, [[]]), ([], [[]]), ([None], [[]]),
+            ([[missing_tag]], [[]]), ([[missing_assets]], [[]]),
             (self.upstream, None), (self.upstream, [[{"assets": None}]]),
             (self.upstream, [[self.release], None]),
             (self.upstream, [[{"assets": [{"name": None, "state": "uploaded", "size": 1}]}]]),

@@ -34,12 +34,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh api repos/dintech-rappy/kcd-mp-releases/releases/latest \
-            > "$RUNNER_TEMP/upstream-release.json"
+          gh api --paginate --slurp 'repos/dintech-rappy/kcd-mp-releases/releases?per_page=100' \
+            > "$RUNNER_TEMP/upstream-release-pages.json"
           gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
             > "$RUNNER_TEMP/release-pages.json"
           python3 ci/select_cef_candidate.py \
-            --upstream "$RUNNER_TEMP/upstream-release.json" \
+            --upstream-releases "$RUNNER_TEMP/upstream-release-pages.json" \
             --releases "$RUNNER_TEMP/release-pages.json" \
             --current-header cef-source/client_compat/bridge/patch_guard.h \
             --github-output "$GITHUB_OUTPUT"
