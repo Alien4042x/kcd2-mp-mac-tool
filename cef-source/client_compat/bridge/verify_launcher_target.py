@@ -51,10 +51,10 @@ def verify(root: Path, write: bool = False) -> None:
         destination.write_text(expected)
     if not destination.exists() or destination.read_text() != expected:
         raise ValueError("Generated Swift target differs from the selected CEF target")
-    source = (root / "CEFLauncher.swift").read_text()
-    if not re.search(r'static let supportedVersion = CEFClientTarget\.version\b', source):
+    source = (root / "webview-bridge/PackagedLauncher.swift").read_text()
+    if not re.search(r'target\.client_version == CEFClientTarget\.version\b', source):
         raise ValueError("Launcher is not using the generated target version")
-    if not re.search(r'static let supportedClientHash = CEFClientTarget\.sha256\b', source):
+    if not re.search(r'target\.client_sha256 == CEFClientTarget\.sha256\b', source):
         raise ValueError("Launcher is not using the generated client SHA-256")
     print(f"Launcher and CEF helper target match KCD:MP {version}: {digest}")
 

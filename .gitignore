@@ -8,3 +8,5 @@ cef-source/client_compat/loader/bin/
 cef-source/client_compat/probe/bin/
 __pycache__/
 *.pyc
+KCD2MP Mac.app/
+/com.apple.DeveloperTools/

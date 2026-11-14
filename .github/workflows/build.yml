@@ -1,4 +1,4 @@
-name: Build Mac launcher
+name: Check Mac source build
 
 on:
   push:
@@ -7,7 +7,6 @@ on:
       - 'docs/**'
       - '.github/workflows/cef-candidate.yml'
   pull_request:
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -29,14 +28,17 @@ jobs:
           zsh -n kcdmp-launch.sh
       - name: Build
         run: |
+          sh ci/prepare-bridge-toolchain.sh
+          sh ci/check-launcher.sh
           xcodebuild -quiet -project 'KCDMP Mac.xcodeproj' -scheme 'KCDMP Mac' \
             -configuration Release -derivedDataPath "$RUNNER_TEMP/kcdmp-build" \
             CODE_SIGNING_ALLOWED=NO build
+          python3 ci/check_app_bundle.py "$RUNNER_TEMP/kcdmp-build/Build/Products/Release/KCD2MP Mac.app"
       - name: Pack unsigned CI build
         if: github.event_name != 'pull_request'
         run: |
           ditto -c -k --sequesterRsrc --keepParent \
-            "$RUNNER_TEMP/kcdmp-build/Build/Products/Release/KCDMP Mac.app" \
+            "$RUNNER_TEMP/kcdmp-build/Build/Products/Release/KCD2MP Mac.app" \
             "$RUNNER_TEMP/KCDMP-Mac-CI.zip"
           (cd "$RUNNER_TEMP" && shasum -a 256 KCDMP-Mac-CI.zip \
             > KCDMP-Mac-CI.zip.sha256)

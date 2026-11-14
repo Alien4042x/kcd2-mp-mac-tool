@@ -158,6 +158,22 @@ func gameProcessIDs(launcherPath: String) throws -> Set<Int32> {
     return found
 }
 
+func launcherProcessIDs(launcherPath: String) throws -> Set<Int32> {
+    let expected = URL(fileURLWithPath: launcherPath).standardizedFileURL.resolvingSymlinksInPath().path
+    var found = Set<Int32>()
+    for pid in try processIDs(matching: "KcdMp_launcher.exe") {
+        guard let snapshot = processSnapshot(pid: pid) else {
+            if kill(pid, 0) != 0 && errno == ESRCH { continue }
+            throw SteamProcessError.processInspectionFailed
+        }
+        guard let executable = snapshot.arguments.first, let prefix = snapshot.environment["WINEPREFIX"],
+              let path = wineExecutablePath(executable, prefix: prefix) else { continue }
+        if URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
+            .caseInsensitiveCompare(expected) == .orderedSame { found.insert(pid) }
+    }
+    return found
+}
+
 func debuggerProcessIDs(launcherPath: String) throws -> Set<Int32> {
     guard let bottleRange = launcherPath.range(of: "/drive_c/") else {
         throw SteamProcessError.notRunning

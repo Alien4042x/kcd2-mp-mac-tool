@@ -134,6 +134,46 @@ def compare_function(name, old, new, old_start, old_end, new_start, new_end,
     totals["functions"] += 1
 
 
+def reviewed_location(name, old, new, old_start, old_end, predicted, objdump,
+                      branches, data_targets, totals):
+    """Relocate only a missing entry, using complete reviewed instruction flow.
+
+    An existing entry that changed still refuses the port. Failed alternatives
+    never contaminate the shared branch/data mapping used by later functions.
+    """
+    size = old.functions[old_start] - old_start
+
+    def check(start):
+        require(start in new.functions and new.functions[start] - start == size,
+                f"{name}: unwind function size changed")
+        local_branches, local_data, local_totals = branches.copy(), data_targets.copy(), totals.copy()
+        compare_function(name, old, new, old_start, old_end, start, start + old_end - old_start,
+                         objdump, local_branches, local_data, local_totals)
+        return start, local_branches, local_data, local_totals
+
+    if predicted in new.functions:
+        match = check(predicted)
+    else:
+        matches = []
+        first_opcode = old.bytes_at(old_start, 1)
+        for start, end in sorted(new.functions.items()):
+            if (abs(start - predicted) > 0x1000 or end - start != size
+                    or new.section_at(start) != ".text" or new.bytes_at(start, 1) != first_opcode):
+                continue
+            try:
+                matches.append(check(start))
+            except ValueError:
+                continue
+        require(len(matches) == 1,
+                f"{name}: missing predicted entry has {len(matches)} fully reviewed relocations, expected one")
+        match = matches[0]
+    start, checked_branches, checked_data, checked_totals = match
+    branches.clear(); branches.update(checked_branches)
+    data_targets.clear(); data_targets.update(checked_data)
+    totals.clear(); totals.update(checked_totals)
+    return start
+
+
 def render_header(manifest):
     lines = [f'// Derived from the exact reviewed {manifest["file_version"].removesuffix(".0")} client. Never hand-update RVAs.',
              "#pragma once", "#include <cstdint>", "namespace target {",
@@ -180,14 +220,15 @@ def prepare(args):
     branches, data_targets = {}, {}
     totals = {"functions": 0, "instructions": 0, "internal_branches": 0, "read_only_refs": 0}
     patches = []
+    relocations = []
     for item in old_manifest["patches"]:
         group = next(group for group, names in PATCH_GROUPS.items() if item["name"] in names)
-        new_rva = item["rva"] + shifts[group]
-        require(old.functions[item["rva"]] - item["rva"] == new.functions.get(new_rva, -1) - new_rva,
-                f'{item["name"]}: unwind function size changed')
-        end = item["function_end"] + shifts[group]
-        compare_function(item["name"], old, new, item["rva"], item["function_end"],
-                         new_rva, end, args.objdump, branches, data_targets, totals)
+        predicted = item["rva"] + shifts[group]
+        new_rva = reviewed_location(item["name"], old, new, item["rva"], item["function_end"],
+                                    predicted, args.objdump, branches, data_targets, totals)
+        end = new_rva + item["function_end"] - item["rva"]
+        if new_rva != predicted:
+            relocations.append({"name": item["name"], "predicted_rva": predicted, "reviewed_rva": new_rva})
         section, offset = new.raw_offset(new_rva, 14)
         require(section == ".text", f'{item["name"]}: entry moved out of .text')
         original = new.bytes_at(new_rva, 14)
@@ -249,6 +290,7 @@ def prepare(args):
     (args.output_dir / f"target-{args.version}.h").write_text(render_header(manifest))
     summary = {"version": args.version, "client_sha256": new.sha256,
                "anchors": {name: f"{shift:+#x}" for name, shift in shifts.items()},
+               "relocated_functions": relocations,
                "external_branches": len(branches), "data_targets": len(data_targets), **totals,
                "live_game_verified": False}
     (args.output_dir / f"candidate-{args.version}.json").write_text(json.dumps(summary, indent=2) + "\n")

@@ -1,55 +1,69 @@
-# KCD:MP for Mac
+# KCD2MP Mac
 
-A small native macOS launcher for [KCD:MP](https://kcd-mp.com/). It shows multiplayer servers and starts the official Windows KCD:MP client in the same bottle as a running Windows Steam client. You need your own Steam copy of Kingdom Come: Deliverance II. This repository does not include the game or the multiplayer client.
+An unofficial macOS launcher for [KCD:MP](https://kcd-mp.com/), the multiplayer mod for Kingdom Come: Deliverance II. It uses your running Windows Steam session and the official KCD:MP launcher. You need your own Steam copy of KCD2. The game and multiplayer client are not included.
 
-**CEF support is experimental.** The bundled compatibility helper targets the exact KCD:MP 0.45.0 client in WineForge. The changed 0.45.0 function was manually reviewed, and the Mac app built successfully. CEF 0.45.0 has not yet been verified in a live game. CrossOver uses the direct launch path without this helper. This build is for local testing, not a stable public release.
+## The 0.50 rebuild
 
-## Install
+KCD:MP 0.50 changed how joining works: external launchers now open a server's details, and the official launcher's **Join** button starts the game. This required a substantial rebuild of the Mac app. See the [official 0.50 changelog](https://kcd-mp.com/changelog).
 
-1. Install Kingdom Come: Deliverance II through the **Windows Steam client** in a WineForge or CrossOver bottle.
-2. Install the **KCD:MP launcher and client** from the [official KCD:MP download page](https://kcd-mp.com/download). Connect checks for client updates and installs the latest official release.
-3. In that same Wine bottle, find the folder containing the game's main executable:
+The new app displays the original launcher interface through macOS WebKit, while the official Windows launcher handles Join and its connection checks. The Mac compatibility helper provides the game's CEF web panels.
+
+**This rebuild is still in progress.** Joining a server, in-game CEF panels and microphone input have worked in local WineForge testing with client 0.50.0. That does not establish long-term stability or support for every launcher feature.
+
+## Install the game and multiplayer mod
+
+1. Install KCD2 through the **Windows Steam client** in your Wine bottle. The verified setup uses WineForge. CrossOver has not yet been tested with the new launcher.
+2. Download the **launcher and client ZIP** from the [official KCD:MP download page](https://kcd-mp.com/download).
+3. For the currently tested Mac setup, extract **all contents** of that ZIP beside the game's main executable:
 
    ```text
-   .../steamapps/common/KingdomComeDeliverance2/Bin/Win64MasterMasterSteamPGO/KingdomCome.exe
+   .../steamapps/common/KingdomComeDeliverance2/Bin/Win64MasterMasterSteamPGO/
+       KingdomCome.exe
+       KcdMp_launcher.exe
+       KcdMp_client.dll
+       ui/
+       ...other files from the multiplayer ZIP
    ```
 
-4. Extract **all contents** of the KCD:MP ZIP into that folder, next to `KingdomCome.exe`. You should now see `KcdMp_launcher.exe` and `KcdMp_client.dll` there too. Keep the ZIP's other files and `ui` folder with them.
-5. Build the Mac app from this repository: open `KCDMP Mac.xcodeproj` in Xcode, select the **KCDMP Mac** scheme, and choose **Product → Build**. You can also run `./build.command` to make `KCDMP Mac.app` next to the project.
+Keep the multiplayer ZIP's other files and its `ui` folder together. Do not copy just the EXE or DLL.
+
+## Install the Mac app
+
+1. Download the Mac ZIP matching your KCD:MP version from [Releases](https://github.com/Alien4042x/kcd2-mp-mac-tool/releases). Older Mac releases use the previous launcher and do not include this 0.50 rebuild.
+2. Extract the ZIP and move **KCD2MP Mac.app** to **Applications**. The ZIP contains the complete Mac app and its compatibility files.
+3. Keep the official multiplayer files in the game folder. On first launch, select `KcdMp_launcher.exe` there if asked. The app remembers this path.
+
+You do not need Python, Xcode or a separate CEF installation to use a packaged Mac release.
 
 ## Play
 
-1. Start the **Windows Steam client in the same WineForge or CrossOver bottle** as KCD2. Leave Steam running while you play. Let any pending KCD2 update finish.
-2. Open `KCDMP Mac.app`.
-3. If the app does not find the multiplayer file automatically, click **Change…** and select the `KcdMp_launcher.exe` you placed next to `KingdomCome.exe`. This is a one-time choice.
-4. Enter your nickname, select a server, and click **Connect**. Use **Refresh** to fetch the latest server list and player counts whenever you want. For the exact supported client in WineForge, the Mac app loads its bundled CEF compatibility helper automatically. You do not need to run a separate test script or install Python.
+The verified flow in the new launcher is:
 
-For a private server, enter its password. To join by address, use the **Direct address** field with `host:port`. Older server versions appear in orange.
+1. Start **Windows Steam in the same bottle as KCD2** and leave it running. Let pending game updates finish.
+2. Open the new Mac launcher.
+3. Enter your name, choose a server and press its **Join** button. **Refresh** updates the server list and player counts. Use **Direct connect** to enter an address.
+4. Allow microphone access if macOS asks and you want voice chat.
 
-Use **Add Favorite** to save the selected server or direct address. **Favorites** selects a saved server, and **Recent Servers** keeps the last ten addresses used with Connect. These lists stay on this Mac. Server passwords are not saved in them.
+The original launcher interface provides favourites, history and settings. There is no extra Mac audio panel. Keep the Mac launcher running while playing. Its Windows backend runs without a separate Dock icon in the tested WineForge setup and still handles the official Join.
 
-Open **Audio & Microphone…** to request microphone access, see its macOS permission state, choose the Mac default input and output devices, or run a ten-second microphone meter. Changing a default audio device affects other apps that use the Mac defaults. The meter tests native Mac input and does not save or send audio. **Wine Audio Settings…** opens Wine configuration in the selected running Windows Steam session. Select its **Audio** tab to inspect input and voice devices. Voice chat still needs an in-game check. The first Connect also requests microphone permission if no decision has been made. If permission was denied, use **Privacy Settings…** to enable it. Reopen the game after changing permission or devices if it keeps using the old input.
+## Known issues
 
-**Test Wine Input** captures one second through the selected Wine session and reports whether Windows audio input received samples with a signal, silence, or an error. It does not save or send audio. This checks Wine's default recording device. KCD:MP's voice mode, push-to-talk key and server voice settings still apply. The test helper's source is in `audio-tools/microphone_probe.c`, with a rebuild script for LLVM-MinGW. Run `sh ci/check-launcher.sh` to check saved-server persistence and diagnostic parsing.
+- Closing the Mac launcher currently also ends the game. Keep it open while playing.
+- The Windows launcher backend does not always close cleanly. The Mac app waits briefly, then terminates its own backend process. Orderly shutdown still needs work.
+- Wine processes can remain running after exit. You may need to end the leftover KCD:MP game or launcher process manually in macOS **Activity Monitor** before launching again.
 
-The Mac app uses the running Steam process to identify the selected bottle. Connect verifies Steam's Wine prefix and active wineserver before starting another Windows process. On CrossOver it also uses Steam's exact CrossOver installation and bottle name. If the session cannot be verified, Connect stops instead of launching with guessed settings. The CEF helper checks that WineForge is using its configured D3DMetal backend and runs only with its verified client DLL. It temporarily enables KCD:MP's `server_ui` preference and restores its previous value after the game exits or a handled launch error. A forced app quit or system shutdown can prevent that restoration.
-
-After the game closes, you can click **Connect** again in the same Mac app window. The app checks for an existing KCD2 or Wine debugger process in the selected bottle before an update or launch. It also reads the official launcher's crash report marker, because the launcher can exit with code 0 after the game crashes. If a confirmed crash leaves an exact game or debugger process observed during this session, the app closes only that process. Steam and its wineserver stay open. A game process still running after the launcher exits keeps Connect unavailable until that game closes. The current helper keeps the original loading screen on this Mac while a level loads. Servers without a web interface still show the native KCD:MP windows.
-
-CrossOver still uses the original launch path without the CEF helper. Its command receives a Windows `C:\...` path to the selected launcher. That command format was checked against the installed CrossOver wrapper and [CodeWeavers' guide](https://www.codeweavers.com/support/docs/crossover-mac/index). There is no KCD2 installation in a CrossOver bottle here, so actual game launch and CEF behavior in CrossOver are not yet verified.
+CrossOver and the full range of official launcher features, including Discord sign-in, have not been verified.
 
 ## Updates
 
-**Connect checks for KCD:MP updates.** For a server on the latest version, it installs the latest official client before joining. When a selected public server is still on an older major/minor version, it leaves the installed client alone. On the exact 0.45.0 DLL it uses the bundled CEF helper. For any other DLL it tries the official client directly, without injecting this helper. The game may run without the Mac CEF interface until that release is tested. Direct addresses have no version information, so Connect follows the latest official release for them. The launch script also has an explicit `--update-only` action for manual use.
+Steam updates KCD2. The official KCD:MP launcher provides multiplayer client updates. The Mac app and its CEF compatibility helper are separate components. Updating the multiplayer client does not automatically update the Mac helper.
 
-Steam updates the base game. The Mac app itself does not auto-update. The official updater handles ordinary KCD:MP client updates without a new Mac app or Git commit while its command line remains compatible. A new reviewed helper and Mac build are needed to restore CEF support after an incompatible client DLL change.
+The CEF helper is tied to an exact verified client DLL. A new client may need a new helper and Mac app build. It must not be used with an unverified DLL.
 
-GitHub Actions checks official KCD:MP releases once a day or when started manually. It builds a draft ZIP only when the latest release has no matching Mac ZIP and a reviewed CEF target is available or the strict client comparison passes. A changed CEF function stops automatic preparation until it is reviewed. The result stays in an unpublished draft release as an unsigned ZIP for a live game check. Sign and notarize locally before publishing. See [automatic builds](docs/automatic-builds.md). For a local build, run `./build.command`, which uses a Developer ID Application identity available on your Mac. Review CEF changes before publishing a new helper.
+New Mac builds are prepared automatically when a new official client passes the compatibility checks. After testing and publication, download the matching Mac ZIP from Releases. The Mac app does not update itself.
 
-The official **Compatible** interface setting selects CPU frames. Without the Mac helper, the observed WineForge run could not create its ready fence or event query, so the game kept its native interface. A durable upstream fix needs a supported CPU composition path in the KCD:MP client. The [upstream request](cef-source/client_compat/UPSTREAM-CEF-REQUEST.md) records the evidence and proposed client change.
+## Source
 
-## Source code
+The new native WebKit host and application-local WebView2 bridge are in [`webview-bridge`](webview-bridge/STATUS.md). CEF helper, loader and watcher sources are in [`cef-source`](cef-source/README.md). The main Xcode project builds the new WebKit launcher. Developer build and draft-release details are in [automatic builds](docs/automatic-builds.md).
 
-The Swift/Xcode launcher source is in this repository. The source for our CEF compatibility DLL, loader and watcher is in [`cef-source`](cef-source/README.md). Xcode packages only the compiled helper files from `cef-compat`. The game, KCD:MP client and Chromium/CEF source are not included.
-
-This is an unofficial community tool and is not affiliated with Warhorse Studios, Steam, or the KCD:MP team.
+This community project is not affiliated with Warhorse Studios, Steam or the KCD:MP team.

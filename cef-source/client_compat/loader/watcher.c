@@ -4,6 +4,7 @@
 #define WATCH_MS 120000
 #define POLL_MS 25
 #define LOADER_MS 25000
+#define MODULE_STARTUP_MS 2000
 #define COMMAND_CAP (PATH_CAP * 3 + 256)
 
 static const wchar_t *basename(const wchar_t *path) {
@@ -40,7 +41,15 @@ static int exact_target(const wchar_t *image, DWORD *pid) {
     return matches;
 }
 
-static int modules(DWORD pid, int *client, int *cef) {
+/* Denied enumeration is unknown, never evidence that CEF is absent. The
+ * launcher creates its target suspended. Permit this one startup race only
+ * after exact path and AMD64 verification, for a bounded two-second grace. */
+static int module_retry(DWORD code, ULONGLONG grace_until) {
+    return transient_module_snapshot_error(code) ||
+        (code == ERROR_ACCESS_DENIED && GetTickCount64() < grace_until);
+}
+
+static int modules(DWORD pid, int *client, int *cef, ULONGLONG grace_until) {
     *client = *cef = 0;
     HANDLE snapshot = INVALID_HANDLE_VALUE;
     DWORD snapshot_error = ERROR_SUCCESS;
@@ -52,21 +61,27 @@ static int modules(DWORD pid, int *client, int *cef) {
         Sleep(2);
     }
     if (snapshot == INVALID_HANDLE_VALUE) {
-        if (transient_module_snapshot_error(snapshot_error)) return 2;
+        if (module_retry(snapshot_error, grace_until)) return 2;
         SetLastError(snapshot_error);
         error(L"watch module snapshot"); return 0;
     }
     MODULEENTRY32W entry = { .dwSize = sizeof(entry) };
     if (!Module32FirstW(snapshot, &entry)) {
         DWORD code = GetLastError(); CloseHandle(snapshot);
-        if (code == ERROR_NO_MORE_FILES || transient_module_snapshot_error(code)) return 2;
-        error(L"watch Module32FirstW"); return 0;
+        if (code == ERROR_NO_MORE_FILES || module_retry(code, grace_until)) return 2;
+        SetLastError(code); error(L"watch Module32FirstW"); return 0;
     }
     do {
         if (same_path(entry.szModule, L"KcdMp_client.dll")) *client = 1;
         if (same_path(entry.szModule, L"libcef.dll")) *cef = 1;
     } while (Module32NextW(snapshot, &entry));
+    DWORD code = GetLastError();
     CloseHandle(snapshot);
+    if (code != ERROR_NO_MORE_FILES) {
+        *client = *cef = 0;
+        if (module_retry(code, grace_until)) return 2;
+        SetLastError(code); error(L"watch Module32NextW"); return 0;
+    }
     return 1;
 }
 
@@ -161,6 +176,8 @@ int wmain(int argc, wchar_t **argv) {
     wprintf(L"watcher: ready. Waiting up to %d ms for a new exact AMD64 target and KcdMp_client.dll\n", WATCH_MS); fflush(stdout);
     ULONGLONG until = GetTickCount64() + WATCH_MS;
     HANDLE target = NULL;
+    ULONGLONG module_grace_until = 0;
+    int module_wait_logged = 0;
     int result = 8;
     while (GetTickCount64() < until) {
         if (!target) {
@@ -170,13 +187,19 @@ int wmain(int argc, wchar_t **argv) {
             if (found == 1) {
                 target = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, pid);
                 if (!target || !process_path(target, image) || !target_amd64(target)) { error(L"watch target verification"); result = 10; break; }
+                module_grace_until = GetTickCount64() + MODULE_STARTUP_MS;
                 wprintf(L"watcher: new exact target pid=%lu\n", pid); fflush(stdout);
             }
         }
         if (target) {
             if (WaitForSingleObject(target, 0) != WAIT_TIMEOUT) { fwprintf(stderr, L"watcher: target exited\n"); result = 11; break; }
             int client = 0, cef = 0;
-            if (!modules(pid, &client, &cef)) { result = 12; break; }
+            int observed = modules(pid, &client, &cef, module_grace_until);
+            if (!observed) { result = 12; break; }
+            if (observed == 2 && !module_wait_logged) {
+                module_wait_logged = 1;
+                wprintf(L"watcher: module list not yet readable, waiting before CEF check\n"); fflush(stdout);
+            }
             if (cef) { fwprintf(stderr, L"watcher: refused target because libcef.dll is already loaded\n"); result = 13; break; }
             if (client) {
                 // This is a best-effort early handoff. The DLL's init must repeat the CEF guard in-process.
