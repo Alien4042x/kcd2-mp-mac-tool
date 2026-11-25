@@ -81,6 +81,22 @@ struct PlacementTests {
             try requireFailure { _ = try LoaderPlacement(directory: directory, loader: loader, expectedHash: digest) }
             try check(try fileSHA256(loader) == digest)
         }
+        try fixture { directory, loader, digest in
+            let lease = try LauncherFolderLease(directory: directory)
+            try requireFailure { _ = try LauncherFolderLease(directory: directory) }
+            try requireFailure { _ = try LoaderPlacement(directory: directory, loader: loader, expectedHash: "invalid", lease: lease) }
+            try requireFailure { _ = try LauncherFolderLease(directory: directory) }
+            let placement = try LoaderPlacement(directory: directory, loader: loader, expectedHash: digest, lease: lease)
+            try placement.cleanup()
+            try requireFailure { _ = try LauncherFolderLease(directory: directory) }
+        }
+        try fixture { directory, loader, digest in
+            let other = directory.appendingPathComponent("other")
+            try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+            let lease = try LauncherFolderLease(directory: directory)
+            try requireFailure { _ = try LoaderPlacement(directory: other, loader: loader, expectedHash: digest, lease: lease) }
+            precondition(!FileManager.default.fileExists(atPath: other.appendingPathComponent("WebView2Loader.dll").path))
+        }
         print("Loader placement checks passed: \(cases) cases, including lock contention, failed init, replacement and interrupted-session recovery")
     }
 }

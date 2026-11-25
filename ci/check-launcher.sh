@@ -7,6 +7,9 @@ python3 -m unittest discover -s "$source_dir/ci" -p 'test_prepare_candidate_relo
 python3 -m unittest discover -s "$source_dir/ci" -p 'test_bridge_resources.py'
 xcrun clang -Wall -Wextra -Werror "$source_dir/ci/test_dock_policy_gate.c" -o "$check_dir/dock-policy-gate"
 "$check_dir/dock-policy-gate"
+xcrun swiftc -parse-as-library "$source_dir/webview-bridge/OfficialClientUpdater.swift" "$source_dir/ci/test_client_updater.swift" \
+  -module-cache-path "$check_dir/module-cache" -o "$check_dir/client-updater"
+"$check_dir/client-updater"
 xcrun swiftc -parse-as-library "$source_dir/webview-bridge/LoaderPlacement.swift" "$source_dir/ci/test_loader_placement.swift" \
   -module-cache-path "$check_dir/module-cache" -o "$check_dir/loader-placement"
 "$check_dir/loader-placement"

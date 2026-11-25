@@ -11,6 +11,27 @@ func fileSHA256(_ url: URL) throws -> String {
     SHA256.hash(data: try Data(contentsOf: url)).map { String(format: "%02x", $0) }.joined()
 }
 
+final class LauncherFolderLease {
+    let directory: URL
+    private var descriptor: Int32 = -1
+
+    init(directory: URL) throws {
+        self.directory = directory.standardizedFileURL.resolvingSymlinksInPath()
+        let path = self.directory.appendingPathComponent(".kcd2mp-webview-loader.lock")
+        descriptor = open(path.path, O_RDWR | O_CREAT | O_NOFOLLOW, S_IRUSR | S_IWUSR)
+        guard descriptor >= 0 else { throw PlacementError.message("Cannot open the launcher session lock.") }
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            close(descriptor)
+            descriptor = -1
+            throw PlacementError.message("KCD2MP Mac is already using this multiplayer folder.")
+        }
+    }
+
+    deinit {
+        if descriptor >= 0 { flock(descriptor, LOCK_UN); close(descriptor) }
+    }
+}
+
 // Own only the DLL created by this app. Existing or replaced files are preserved.
 final class LoaderPlacement {
     private struct Receipt: Codable {
@@ -20,58 +41,51 @@ final class LoaderPlacement {
     }
     private let target: URL
     private let receiptURL: URL
-    private var lockFD: Int32 = -1
+    private let lease: LauncherFolderLease
     private var receipt: Receipt?
 
-    init(directory: URL, loader: URL, expectedHash: String) throws {
+    init(directory: URL, loader: URL, expectedHash: String, lease: LauncherFolderLease? = nil) throws {
         target = directory.appendingPathComponent("WebView2Loader.dll")
         receiptURL = directory.appendingPathComponent(".kcd2mp-webview-loader.json")
-        let lockURL = directory.appendingPathComponent(".kcd2mp-webview-loader.lock")
-        lockFD = open(lockURL.path, O_RDWR | O_CREAT | O_NOFOLLOW, S_IRUSR | S_IWUSR)
-        guard lockFD >= 0 else { throw PlacementError.message("Cannot open the launcher session lock.") }
-        guard flock(lockFD, LOCK_EX | LOCK_NB) == 0 else {
-            close(lockFD)
-            lockFD = -1
-            throw PlacementError.message("KCD2MP Mac is already using this multiplayer folder.")
+        if let lease {
+            guard lease.directory == directory.standardizedFileURL.resolvingSymlinksInPath() else {
+                throw PlacementError.message("The multiplayer folder lock belongs to another directory.")
+            }
+            self.lease = lease
+        } else {
+            self.lease = try LauncherFolderLease(directory: directory)
         }
+        let data = try Data(contentsOf: loader)
+        guard data.starts(with: [0x4d, 0x5a]), try fileSHA256(loader) == expectedHash else {
+            throw PlacementError.message("The bundled WebKit bridge is damaged.")
+        }
+        if FileManager.default.fileExists(atPath: receiptURL.path) {
+            let previous = try JSONDecoder().decode(Receipt.self, from: Data(contentsOf: receiptURL))
+            try removeOwned(previous)
+            try FileManager.default.removeItem(at: receiptURL)
+        }
+        let fd = open(target.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, S_IRUSR | S_IWUSR)
+        guard fd >= 0 else { throw PlacementError.message("A WebView2Loader.dll already exists here. It has been left unchanged.") }
+        let output = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        var identity = stat()
+        guard fstat(fd, &identity) == 0 else {
+            try? output.close()
+            throw PlacementError.message("Cannot identify the temporary WebKit bridge.")
+        }
+        let owned = Receipt(sha256: expectedHash, inode: identity.st_ino, device: identity.st_dev)
         do {
-            let data = try Data(contentsOf: loader)
-            guard data.starts(with: [0x4d, 0x5a]), try fileSHA256(loader) == expectedHash else {
-                throw PlacementError.message("The bundled WebKit bridge is damaged.")
-            }
-            if FileManager.default.fileExists(atPath: receiptURL.path) {
-                let previous = try JSONDecoder().decode(Receipt.self, from: Data(contentsOf: receiptURL))
-                try removeOwned(previous)
-                try FileManager.default.removeItem(at: receiptURL)
-            }
-            let fd = open(target.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, S_IRUSR | S_IWUSR)
-            guard fd >= 0 else { throw PlacementError.message("A WebView2Loader.dll already exists here. It has been left unchanged.") }
-            let output = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
-            var identity = stat()
-            guard fstat(fd, &identity) == 0 else {
-                try? output.close()
-                throw PlacementError.message("Cannot identify the temporary WebKit bridge.")
-            }
-            let owned = Receipt(sha256: expectedHash, inode: identity.st_ino, device: identity.st_dev)
-            do {
-                try output.write(contentsOf: data)
-                try output.synchronize()
-                try output.close()
-                guard try fileSHA256(target) == expectedHash else { throw PlacementError.message("Temporary bridge verification failed.") }
-                try JSONEncoder().encode(owned).write(to: receiptURL, options: .atomic)
-                receipt = owned
-            } catch {
-                // A partial write still belongs to this exact inode.
-                var current = stat()
-                if lstat(target.path, &current) == 0 && current.st_ino == owned.inode && current.st_dev == owned.device {
-                    try? FileManager.default.removeItem(at: target)
-                }
-                throw error
-            }
+            try output.write(contentsOf: data)
+            try output.synchronize()
+            try output.close()
+            guard try fileSHA256(target) == expectedHash else { throw PlacementError.message("Temporary bridge verification failed.") }
+            try JSONEncoder().encode(owned).write(to: receiptURL, options: .atomic)
+            receipt = owned
         } catch {
-            flock(lockFD, LOCK_UN)
-            close(lockFD)
-            lockFD = -1
+            // A partial write still belongs to this exact inode.
+            var current = stat()
+            if lstat(target.path, &current) == 0 && current.st_ino == owned.inode && current.st_dev == owned.device {
+                try? FileManager.default.removeItem(at: target)
+            }
             throw error
         }
     }
@@ -98,6 +112,5 @@ final class LoaderPlacement {
 
     deinit {
         try? cleanup()
-        if lockFD >= 0 { flock(lockFD, LOCK_UN); close(lockFD) }
     }
 }

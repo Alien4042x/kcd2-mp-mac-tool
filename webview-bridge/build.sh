@@ -21,7 +21,7 @@ app="$output/KCD2MP Mac.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 sh "$source_dir/build-dock-policy.sh" "$app/Contents/Resources/libKcdMpDockPolicy.dylib"
 xcrun swiftc -swift-version 5 -O -parse-as-library "$repo_dir/SteamProcess.swift" "$repo_dir/CEFClientTarget.swift" \
-  "$source_dir/LoaderPlacement.swift" "$source_dir/PackagedLauncher.swift" "$source_dir/NativeHost.swift" \
+  "$source_dir/LoaderPlacement.swift" "$source_dir/OfficialClientUpdater.swift" "$source_dir/PackagedLauncher.swift" "$source_dir/NativeHost.swift" \
   -framework AppKit -framework WebKit -framework AVFoundation -framework Security -module-cache-path "$output/swift-cache" \
   -o "$app/Contents/MacOS/bridge-host"
 xcrun swiftc -swift-version 5 -O -parse-as-library "$repo_dir/SteamProcess.swift" "$source_dir/GateProbe.swift" \

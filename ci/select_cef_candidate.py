@@ -79,8 +79,10 @@ def newest_client(upstream_pages):
     raise ValueError("No stable upstream Windows client found")
 
 
-def select(upstream_pages, release_pages, current):
+def select(upstream_pages, release_pages, current, *, test_build=False):
     tag, version = newest_client(upstream_pages)
+    if test_build:
+        return tag, version, build_mode(version, current)
     if not isinstance(release_pages, list):
         raise ValueError("Repository releases must be a JSON array")
     if release_pages and all(isinstance(item, dict) for item in release_pages):
@@ -107,9 +109,13 @@ def select(upstream_pages, release_pages, current):
                     found = True
     if found:
         return tag, version, "false"
+    return tag, version, build_mode(version, current)
+
+
+def build_mode(version, current):
     if tuple(map(int, version.split("."))) < tuple(map(int, current.split("."))):
         raise ValueError("Official latest client is older than the selected CEF target")
-    return tag, version, "current" if version == current else "candidate"
+    return "current" if version == current else "candidate"
 
 
 def main():
@@ -118,11 +124,12 @@ def main():
     parser.add_argument("--releases", type=Path, required=True)
     parser.add_argument("--current-header", type=Path, required=True)
     parser.add_argument("--github-output", type=Path, required=True)
+    parser.add_argument("--test-build", action="store_true", help="Build the latest client even if it already has a Mac ZIP")
     args = parser.parse_args()
     try:
         tag, version, build = select(
             read_json(args.upstream_releases), read_json(args.releases),
-            current_version(args.current_header))
+            current_version(args.current_header), test_build=args.test_build)
         with args.github_output.open("a") as output:
             output.write(f"tag={tag}\nversion={version}\nbuild={build}\n")
     except (OSError, ValueError) as error:

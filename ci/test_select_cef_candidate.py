@@ -32,6 +32,14 @@ class CandidateSelectionTests(unittest.TestCase):
         self.release["draft"] = True
         self.assertEqual(select(self.upstream, [[], [self.release]], "0.44.0")[2], "false")
 
+    def test_manual_test_build_can_rebuild_an_existing_draft(self):
+        self.release["draft"] = True
+        self.assertEqual(select(self.upstream, [[self.release]], "0.43.0", test_build=True),
+                         ("v0.44.0", "0.44.0", "candidate"))
+        self.assertEqual(select(self.upstream, [[self.release]], "0.44.0", test_build=True)[2], "current")
+        with self.assertRaisesRegex(ValueError, "older than the selected CEF target"):
+            select(self.upstream, [[self.release]], "0.45.0", test_build=True)
+
     def test_no_existing_asset_selects_current_or_candidate(self):
         self.assertEqual(select(self.upstream, [[]], "0.44.0")[2], "current")
         self.assertEqual(select(self.upstream, [[]], "0.43.0")[2], "candidate")

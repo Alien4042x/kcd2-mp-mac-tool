@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '37 18 * * *'
   workflow_dispatch:
+    inputs:
+      test_build:
+        description: Build the latest client again and save a test ZIP in Actions
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -31,18 +36,25 @@ jobs:
         id: release
         env:
           GH_TOKEN: ${{ github.token }}
+          TEST_BUILD: ${{ inputs.test_build }}
         shell: bash
         run: |
           set -euo pipefail
           gh api --paginate --slurp 'repos/dintech-rappy/kcd-mp-releases/releases?per_page=100' \
             > "$RUNNER_TEMP/upstream-release-pages.json"
-          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-            > "$RUNNER_TEMP/release-pages.json"
+          args=()
+          if [[ "$TEST_BUILD" == true ]]; then
+            args+=(--test-build)
+            printf '[]\n' > "$RUNNER_TEMP/release-pages.json"
+          else
+            gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+              > "$RUNNER_TEMP/release-pages.json"
+          fi
           python3 ci/select_cef_candidate.py \
             --upstream-releases "$RUNNER_TEMP/upstream-release-pages.json" \
             --releases "$RUNNER_TEMP/release-pages.json" \
             --current-header cef-source/client_compat/bridge/patch_guard.h \
-            --github-output "$GITHUB_OUTPUT"
+            --github-output "$GITHUB_OUTPUT" "${args[@]}"
 
   candidate:
     needs: detect
@@ -165,11 +177,12 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: KCDMP-CEF-${{ needs.detect.outputs.tag }}-candidate
-          path: dist/
+          path: ${{ inputs.test_build && format('dist/KCDMP-Mac-{0}.zip', needs.detect.outputs.tag) || 'dist/' }}
           if-no-files-found: error
 
   save-draft:
     needs: [detect, candidate]
+    if: ${{ !inputs.test_build }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
